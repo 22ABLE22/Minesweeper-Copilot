@@ -1,6 +1,14 @@
-# mine-sweeping
+# Minesweeper Copilot
 
-自动玩网页版扫雷：整屏截图 → 切成单个格子 → CNN 识别棋盘状态 → 确定性推理 → 自动左键点开、右键插旗。
+自动玩网页版扫雷：整屏截图 → 切成单个格子 → CNN 识别棋盘状态 → 确定性推理 → 点击前复核 → 自动左键点开、右键插旗。
+
+核心主张是**绝不赌**：推理只用确定性结论，动手之前还要用两条互不相关的路径再验一遍，发现任何不确定就停下把决定权交还给你。
+
+## 来源与致谢
+
+棋盘推理的核心函数 `deal_board()`（基础规则、消旗、子集推理、交叉集推理四步）来自 [hyper-zlc/mine-sweeping](https://github.com/hyper-zlc/mine-sweeping)，原项目的这份实现是本仓库的起点。
+
+除此之外的代码均为本仓库重写或新增：识别链路的模型结构与训练流程、点击前的颜色复核与概率复核、概率求解器 `minesolver.py`、标定与样本采集工具（`calibrate.py`、`collect.py`、`renumber.py`、`pack_samples.py`）、红雷识别与自动标雷模式等。`deal_board()` 本身一行未改，位置见 `saolei.py` 中 `def deal_board`。
 
 ## 目录结构
 
@@ -44,8 +52,8 @@
 - 浏览器缩放 100%，系统显示缩放 100%，游戏窗口位置固定
 
 ```powershell
-conda create -n mine-sweeping python=3.12 -y
-conda activate mine-sweeping
+conda create -n minesweeper-copilot python=3.12 -y
+conda activate minesweeper-copilot
 pip install -r requirements.txt
 ```
 
@@ -261,3 +269,5 @@ python collect.py --dry-run       # 只统计不存图
 ## License
 
 MIT，见 [LICENSE](LICENSE)。
+
+本仓库的版权声明保留原作者 hyper-zlc（2020），并追加当前维护者（2026），两者共同构成 MIT 要求的版权行。
