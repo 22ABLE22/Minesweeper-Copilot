@@ -44,7 +44,8 @@ def convert(src, dst):
 
     print('[convert] 用 tf-keras 读取 SavedModel: %s' % src)
     old = tf_keras.models.load_model(src, compile=False)
-    new = build_model()
+    # 源模型的输出维度决定重建网络的类别数（老版本是 11 类，没有爆炸的红雷）
+    new = build_model(num_classes=int(old.layers[-1].units))
 
     if len(new.layers) != len(old.layers):
         sys.exit('[convert] 层数不一致: 源 %d / 目标 %d' % (len(old.layers), len(new.layers)))

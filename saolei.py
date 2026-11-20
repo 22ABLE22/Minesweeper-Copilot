@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 # TensorFlow 的启动噪音（"GPU support is not available"、oneDNN/AVX 编译提示）
 # 都是无害的，而且必须在 import keras / tensorflow 之前生效：
@@ -27,7 +28,14 @@ MODEL_PATH = os.path.join(BASE_DIR, 'recognize_new.keras')
 COLLECT_ON_GAME_END = True
 
 from collect import collect_board
+
+# 爆炸的红雷：踩中的那颗雷在界面上是红底的，出现它说明本局已经结束
+BOOM_CLASS = 10
+
 model = load_model(MODEL_PATH)  # 已训练的CNN（Keras 3 的 .keras 格式）
+if int(model.layers[-1].units) != len(net_encoder):
+    print('[model] 当前模型输出 %d 类，config 里有 %d 类（新增 10=爆炸的红雷）；'
+          '红雷要重训后才认得出来' % (int(model.layers[-1].units), len(net_encoder)))
 
 
 # 获取截图
@@ -229,8 +237,20 @@ def click_cell(r, c, right=False, duration=0.01, interval=0.01):
     pyautogui.sleep(interval)
 
 
+def find_boom(board):
+    """返回爆炸的红雷坐标列表（棋盘第几行第几列，0 基数）。"""
+    hits = np.argwhere(board == BOOM_CLASS)
+    return [(int(r), int(c)) for r, c in hits]
+
+
 def game_once(duration=0.01, interval=0.01, auto_flag=False):
     board = get_cnn_board(model)
+    boom = find_boom(board)
+    if boom:
+        r, c = boom[0]
+        print('[boom] 第 %d 行第 %d 列识出爆炸的红雷，本局已结束，程序退出' % (r + 1, c + 1))
+        collect_after_game()  # 顺手把这一局（含红雷）收进样本
+        sys.exit(0)
     to_click, to_flag = deal_board(board)
 
     print('click_pos', to_click)

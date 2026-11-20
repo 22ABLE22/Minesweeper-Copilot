@@ -5,8 +5,9 @@
 5 暗红、6 青、7 黑），所以「青色的 6」一定能拿到标签 6，不会出现
 「模型把它认成 4，于是样本被存进 4 的文件夹」这种把错误标签固化下来的问题。
 
-只采集数字格（1..7）：空块、未翻开、旗子和地雷用颜色区分不可靠，
-这些类别继续用 imgs/ 里的样本。
+采集数字格（1..7）和爆炸的红雷（10）。数字靠笔画颜色认；红雷靠「整格红底 + 黑色雷」
+认——它和红色的 3 的区别在于 3 只有笔画是红的、底色仍是灰的。
+空块、未翻开、旗子和普通地雷用颜色区分不可靠，这些类别继续用 imgs/ 里的样本。
 
 用法:
     python collect.py                       # 抓一次当前屏幕
@@ -35,6 +36,12 @@ PALETTE = {
     7: (0, 0, 0),
 }
 
+# 爆炸的红雷：踩中的那颗雷是整格红底 + 黑色雷。红色像素占比要够大，
+# 同时红 + 黑几乎铺满整格；红色的 3 只有笔画是红的，红+黑远达不到这个比例。
+BOOM_LABEL = 10
+BOOM_RED = 0.12
+BOOM_COVER = 0.92
+
 
 def grab_board(region=BG_REGION):
     """按 config 的几何抓取棋盘区域，返回 RGB ndarray。"""
@@ -60,7 +67,7 @@ def split_cells(region_img, rows=ROWS, cols=COLS):
 
 
 def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
-    """按笔画颜色判断数字。无法确定时返回 None（宁可不收，也不要错标签）。"""
+    """按颜色判断格子类别（1..7 数字，10 爆炸的红雷）。无法确定时返回 None。"""
     a = np.asarray(cell, dtype=np.int16)
     h, w = a.shape[:2]
     # 去掉四周的可能残留的格子边框
@@ -68,6 +75,10 @@ def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
     b = a[m:h - m, m:w - m]
     if b.size == 0:
         return None
+    red = (b[:, :, 0] > 140) & (b[:, :, 1] < 110) & (b[:, :, 2] < 110)
+    dark = b.sum(axis=2) / 3.0 < 70
+    if red.mean() > BOOM_RED and (red | dark).mean() > BOOM_COVER:
+        return BOOM_LABEL
     sat = b.max(axis=2) - b.min(axis=2)
     lum = b.sum(axis=2) / 3.0
     ink = (sat > 90) | (lum < 60)
@@ -84,9 +95,22 @@ def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
     return best
 
 
+def next_index(folder, digit):
+    """返回该类别目录里下一个可用编号（已有 1 编号则从 2 起）。"""
+    best = 0
+    if os.path.isdir(folder):
+        prefix = '%d_' % digit
+        for name in os.listdir(folder):
+            if name.startswith(prefix) and name.lower().endswith('.png'):
+                num = name[len(prefix):-4]
+                if num.isdigit():
+                    best = max(best, int(num))
+    return best + 1
+
+
 def collect_board(region_img=None, region=BG_REGION, out=SAMPLES_PATH,
                   save=True, verbose=True, sheet=False, min_cells=8):
-    """切格 -> 颜色判标签 -> 存图。返回 Counter({数字: 张数})。"""
+    """切格 -> 颜色判标签 -> 存图。返回 Counter({标签: 张数})。"""
     if region_img is None:
         region_img = grab_board(region)
     cells = split_cells(region_img)
@@ -104,18 +128,24 @@ def collect_board(region_img=None, region=BG_REGION, out=SAMPLES_PATH,
     # 这种「不像棋盘」的画面一律不存，避免把浏览器界面的杂色当样本。
     if len(found) < min_cells:
         if verbose:
-            print('[collect] 只找到 %d 个数字格（少於 %d），看起来不是展开的棋盘，不保存'
+            print('[collect] 只找到 %d 个可标注格子（少於 %d），看起来不是展开的棋盘，不保存'
                   % (len(found), min_cells))
         return counts
 
     if save:
+        counters = {}
         for r, c, digit, cell in found:
             d = os.path.join(out, str(digit))
             os.makedirs(d, exist_ok=True)
-            cell.save(os.path.join(d, '%d_%d_%d_%d.png' % (digit, stamp, r, c)))
+            # 文件按 <类别>_<序号>.png 连续编号，从目录里已有的最大编号往后接，
+            # 这样人工筛选、重排之后也不会撞名
+            if digit not in counters:
+                counters[digit] = next_index(d, digit)
+            counters[digit] += 1
+            cell.save(os.path.join(d, '%d_%04d.png' % (digit, counters[digit])))
     samples = [(digit, cell) for r, c, digit, cell in found[:60]]
     if verbose:
-        print('[collect] 数字格 %d 张，分布 %s' % (
+        print('[collect] 命中 %d 张，分布 %s' % (
             sum(counts.values()), dict(sorted(counts.items()))))
         if save:
             print('[collect] 已保存到 %s/<数字>/' % out)

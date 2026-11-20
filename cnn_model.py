@@ -5,14 +5,16 @@
 保证两边永远是同一套层结构与预处理。
 
 输入：32x32x3，RGB，取值 0~1
-输出：11 类 softmax，类别含义见 config.net_encoder
+输出：softmax，类别数量由 config.net_encoder 决定（当前含爆炸的红雷共 12 类）
 """
 
 import keras
 from keras import layers
 
+from config import net_encoder
+
 INPUT_SHAPE = (32, 32, 3)
-NUM_CLASSES = 11
+NUM_CLASSES = len(net_encoder)
 
 
 def build_model(input_shape=INPUT_SHAPE, num_classes=NUM_CLASSES):
