@@ -2,13 +2,15 @@
 """训练扫雷识别用的 CNN。
 
 用法:
-    python train_img.py                          # imgs/ + samples/auto/ 一起训
-    python train_img.py --epochs 20 --per-class 200
-    python train_img.py --sources imgs --no-augment     # 只用原始样本、不做增强
+    python train_img.py                          # 用 imgs/ 训练
+    python train_img.py --epochs 20 --per-class 300
+    python train_img.py --no-augment             # 不用增强，只训原始样本
 
 数据来源:
-    imgs/          手工整理的样本（按类别分文件夹，文件夹名是 net_encoder 的键）
-    samples/auto/  collect.py 每局结束时按数字颜色自动采集的样本（只收 3、4、5、6、10）
+    imgs/  全部训练样本（按类别分文件夹，文件夹名是 net_encoder 的键）
+    仓库里只跟踪 imgs.tar.gz；imgs/ 不存在时会自动解包（等价于
+    python pack_samples.py --extract），解出来的 imgs/ 不入库。
+    collect.py 采到的新样本默认也写进 imgs/，人工筛完直接重训即可
 
 训练集用数据增强（平移、缩放、亮度、对比度、轻微模糊）把每类补到 --per-class 张，
 验证集只用未增强的原始图片，保证报告的是真实分布下的准确率。
@@ -32,11 +34,22 @@ import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
 from cnn_model import INPUT_SHAPE, NUM_CLASSES, build_model
-from config import SAMPLES_PATH, TRAIN_PATH, net_decoder, net_encoder
+from config import TRAIN_PATH, net_decoder, net_encoder
+from pack_samples import OUT as SAMPLES_TAR, extract as extract_samples
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_OUT = os.path.join(BASE_DIR, 'recognize_new.keras')
 MODEL_CLASSES = os.path.join(BASE_DIR, 'recognize_new.classes.json')
+
+
+def ensure_samples():
+    """imgs/ 不存在但仓库带着 imgs.tar.gz 时，先自动解包再训练。"""
+    if os.path.isdir(TRAIN_PATH):
+        return
+    if not os.path.isfile(SAMPLES_TAR):
+        return          # 交给 scan_sources 打印跳过提示
+    print('[train] 没有 %s，从 %s 解包' % (TRAIN_PATH, os.path.basename(SAMPLES_TAR)))
+    extract_samples()
 
 
 def scan_sources(sources):
@@ -167,8 +180,8 @@ def plot_history(history):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--sources', default=None, help='逗号分隔的数据目录，默认 imgs 与 samples/auto')
-    ap.add_argument('--per-class', type=int, default=150, help='训练集每类目标张数（增强补足）')
+    ap.add_argument('--sources', default=None, help='逗号分隔的数据目录，默认只用 imgs')
+    ap.add_argument('--per-class', type=int, default=500, help='训练集每类目标张数（增强补足）')
     ap.add_argument('--val-split', type=float, default=0.15, help='验证集比例（只用原始图片）')
     ap.add_argument('--epochs', type=int, default=12)
     ap.add_argument('--batch-size', type=int, default=64)
@@ -181,15 +194,18 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    ensure_samples()
+
     if args.sources:
         sources = [os.path.join(BASE_DIR, p) if not os.path.isabs(p) else p
                    for p in args.sources.split(',')]
     else:
-        sources = [TRAIN_PATH, SAMPLES_PATH]
+        sources = [TRAIN_PATH]
 
     pools = scan_sources(sources)
     if not pools:
-        raise SystemExit('[train] 没有找到训练图片。样例数据见仓库的 imgs/')
+        raise SystemExit('[train] 没有找到训练图片。仓库自带 imgs.tar.gz，'
+                         '跑 python pack_samples.py --extract 解包后再试')
 
     use_aug = not args.no_augment
     x, y, vx, vy = build_sets(pools, args.per_class, args.val_split, use_aug)

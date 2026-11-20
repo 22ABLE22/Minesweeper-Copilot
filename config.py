@@ -18,6 +18,10 @@ BG_REGION = (18, 176, 2504, 1175)
 ROWS = 30
 COLS = 64
 
+# 整盘雷数。只给 minesolver.py 算概率用：推不动时它会算出「点哪一格最安全」。
+# 填你开局时设置的雷数；填 0 表示不知道，程序按当前已翻开的数字估算（会不准）。
+TOTAL_MINES = 0
+
 # 单个格子的像素尺寸（由上面三个值推导，只读，不要手改）
 row_size = BG_REGION[3] / ROWS
 cols_size = BG_REGION[2] / COLS
@@ -44,7 +48,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 训练集：每个类别一个子文件夹，文件夹名就是 net_encoder 的键（-2、-1、0..9）
 TRAIN_PATH = os.path.join(BASE_DIR, 'imgs')
 
-# 每局结束时自动采集的样本目录（collect.py 按数字颜色打标签，见 README）
+# collect.py 采集新样本的目录（按数字颜色打标签，见 README）。
+# 筛完并入 imgs/ 后再重训；samples/ 不入库。
 SAMPLES_PATH = os.path.join(BASE_DIR, 'samples', 'auto')
 
 # 按 R 键记录新样本的目录（同样按类别分子文件夹）

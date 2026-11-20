@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""把 samples/auto 下的样本按目录类别重新编号为 <类别>_<序号>.png。
+"""把样本目录按类别重新编号为 <类别>_<序号>.png。
+
+用法：
+    python renumber.py                     # 处理 samples/auto
+    python renumber.py imgs/6              # 只处理一个类别目录
+    python renumber.py imgs                # 处理 imgs 下所有类别
+    python renumber.py imgs --dry-run      # 只打印不改动
 
 分两阶段：先把所有文件改成 __tmp__ 前缀，再改到最终名，
 避免新旧名字撞车（例如 3_0001.png 已存在时被覆盖）。
@@ -7,17 +13,36 @@
 import os
 import sys
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'samples', 'auto')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DRY = '--dry-run' in sys.argv
+ARGS = [a for a in sys.argv[1:] if not a.startswith('-')]
+
+
+def resolve_root():
+    """没给目录时沿用 samples/auto；给了就相对脚本所在目录解析。"""
+    if not ARGS:
+        return os.path.join(BASE_DIR, 'samples', 'auto')
+    arg = ARGS[0].replace('\\', '/')
+    return arg if os.path.isabs(arg) else os.path.join(BASE_DIR, arg)
+
+
+ROOT = resolve_root()
+
 
 def main():
     if not os.path.isdir(ROOT):
         sys.exit('没有目录: %s' % ROOT)
     total = 0
-    for cls in sorted(os.listdir(ROOT), key=lambda s: (len(s), s)):
-        d = os.path.join(ROOT, cls)
-        if not os.path.isdir(d):
-            continue
+    # 传的目录本身就是类别目录（如 imgs/6）时，直接按它自己的名字当类别
+    self_class = os.path.basename(os.path.normpath(ROOT))
+    has_subdir = any(os.path.isdir(os.path.join(ROOT, e)) for e in os.listdir(ROOT))
+    if has_subdir:
+        targets = [(cls, os.path.join(ROOT, cls))
+                   for cls in sorted(os.listdir(ROOT), key=lambda s: (len(s), s))
+                   if os.path.isdir(os.path.join(ROOT, cls))]
+    else:
+        targets = [(self_class, ROOT)]
+    for cls, d in targets:
         files = sorted(f for f in os.listdir(d) if f.lower().endswith('.png'))
         if not files:
             print('%-4s 空目录，跳过' % cls)

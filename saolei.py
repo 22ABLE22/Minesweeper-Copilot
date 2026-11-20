@@ -20,15 +20,11 @@ from multiprocess import Pool
 from pynput.keyboard import KeyCode, Listener
 
 from config import *
+from minesolver import hint as mine_hint
 from time import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'recognize_new.keras')
-
-# 每局结束时自动采集样本（collect.py 按数字颜色打标签，标签不会写错）
-COLLECT_ON_GAME_END = True
-
-from collect import collect_board
 
 # 爆炸的红雷：踩中的那颗雷在界面上是红底的，出现它说明本局已经结束
 BOOM_CLASS = 10
@@ -270,6 +266,27 @@ def find_boom(board):
     return [(int(r), int(c)) for r, c in hits]
 
 
+def print_safety_hint(board):
+    """推不动了：算出所有未翻开格子的中雷概率，把最安全的几个列出来。
+
+    只给建议，绝不自动点击——猜错了这局就结束了，决定权留给人。
+    """
+    entries, info = mine_hint(board, top=3)
+    if info.get('error'):
+        print('           算不出安全概率：%s' % info['error'])
+        return
+    if info['contradictions']:
+        # 约束自相矛盾说明棋盘识别有误（常见于 6 被认成 4），概率不可信。
+        print('           注意：有 %d 条约束互相矛盾，棋盘识别可能有误，下面的概率仅供参考。'
+              % info['contradictions'])
+    print('           全盘剩余 %d 颗雷，%d 格未翻开；最安全的几格：'
+          % (info['total_mines'] - info['flags'], info['unknown']))
+    for i, (r, c, prob) in enumerate(entries, 1):
+        mark = '（等于随便点，棋盘已无信息可用）' if prob >= 0.999 else ''
+        print('             %d. 第 %2d 行第 %2d 列   中雷概率 %5.1f%% %s'
+              % (i, r + 1, c + 1, 100.0 * prob, mark))
+
+
 _LAST_ROUND = {'sig': None}  # 上一轮实际执行的 (点击, 标雷) 组合，用于兜底检测空转
 
 
@@ -279,7 +296,6 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
     if boom:
         r, c = boom[0]
         print('[boom] 第 %d 行第 %d 列识出爆炸的红雷，本局已结束，程序退出' % (r + 1, c + 1))
-        collect_after_game()  # 顺手把这一局（含红雷）收进样本
         sys.exit(0)
     to_click, to_flag = deal_board(board)
 
@@ -308,7 +324,8 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
             print('           自动标雷模式下旗子由游戏插，程序不发右键，所以这一轮无事可做。')
         else:
             print('[deadlock] 没有能确定推理的格子。')
-        print('           请手动点开一格（猜），然后按 B 继续，或按 Z 只点安全格。')
+        print_safety_hint(board)
+        print('           请手动点开上面最安全的一格，然后按 B 继续，或按 Z 只点安全格。')
         print('           Z 模式需要先在游戏里打开「自动标雷」，否则旗子插不上，会一直停在这里。')
         return False
     # 兜底：动作一模一样地重复，说明点了也没生效（坐标标定不对、窗口被遮挡、
@@ -321,27 +338,10 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
     return True
 
 
-def collect_after_game():
-    """一局结束后把整盘数字格按颜色采集下来，作为重训样本。"""
-    if not COLLECT_ON_GAME_END:
-        return
-    try:
-        counts = collect_board(verbose=False)
-    except Exception as exc:  # 采集失败绝不影响游戏流程
-        print('[collect] 采集失败:', exc)
-        return
-    total = sum(counts.values())
-    if total:
-        print('[collect] 本局结束，采集 %d 张：%s' % (total, dict(sorted(counts.items()))))
-    else:
-        print('[collect] 本局结束，没有采到数字格（棋盘可能已被重置或被窗口遮挡）')
-
-
 def game_all(auto_flag=False):
     _LAST_ROUND['sig'] = None  # 每次按 B/Z 都是一次新的连续执行，重复检测从零开始
     while game_once(auto_flag=auto_flag):
         pass
-    collect_after_game()
     print('[done] 已停止。猜完一步后按 B 继续（自动标雷模式按 Z）。')
 
 
