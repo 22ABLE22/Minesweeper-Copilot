@@ -2,12 +2,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# 运行产物
+# 运行产物（都会自动重建，不入库）
 dir/
 samples/
 screenshots/
 screen*.png
 
-# 可选的本地目录：SavedModel 源模型（convert_legacy_model.py 的输入）
-recognize_new/
-.backup/
+# 模型备份
+*.bak

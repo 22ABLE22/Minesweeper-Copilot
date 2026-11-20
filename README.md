@@ -13,7 +13,6 @@
 | `collect.py` | 按数字颜色从真实棋盘采集带标签样本到 `samples/auto/` |
 | `renumber.py` | 人工筛选完样本后，把 `samples/auto/` 下每个类别重新连续编号 |
 | `calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
-| `convert_legacy_model.py` | 可选：把 SavedModel 目录转成 `.keras` |
 | `recognize_new.keras` | 已训练好的识别模型（Keras 3 格式） |
 | `recognize_new.classes.json` | 训练时的类别表，`saolei.py` 靠它核对模型与 `config.py` 是否配套 |
 | `imgs/` | 训练样本，目录名即类别（`-2`、`-1`、`0`–`9`） |
@@ -94,18 +93,7 @@ python saolei.py
 
 训练还会写出 `recognize_new.classes.json`（训练时的类别表）。`saolei.py` 启动时把它和 `config.net_encoder` 逐项比对：只比类数是不够的——删掉一个类又加回另一个，类数相同但下标全部错位，模型会静默给出错误结果。两者不一致、或者文件缺失时，启动会打印一条 `[model]` 提示，此时应先重训。
 
-模型是 Keras 3 的 `.keras` 格式（V3），这也是 `load_model` 当前支持的原生格式。训练一次即覆盖仓库里的同名文件，不需要改代码。
-
-如果手上只有 SavedModel 目录（`saved_model.pb` + `variables/`），可以转换：
-
-```powershell
-pip install tf-keras==2.21.0      # 版本号与 tensorflow 对应
-python convert_legacy_model.py recognize_new recognize_new.keras
-```
-
-转换脚本不会直接另存为 `.keras`：SavedModel 里的层带有 `batch_input_shape` 参数，Keras 3 读这种文件会报
-`Unrecognized keyword arguments passed to Conv2D: {'batch_input_shape': ...}`。
-所以它用 `cnn_model.build_model()` 新建同构网络，再逐层 `set_weights` 复制权重。
+模型是 Keras 3 的 `.keras` 格式，训练一次即覆盖仓库里的同名文件，不需要改代码。
 
 ## 四、训练自己的模型
 

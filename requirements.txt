@@ -6,6 +6,3 @@ pyautogui
 pillow
 multiprocess
 pynput
-
-# 可选：convert_legacy_model.py 读取 SavedModel 目录时需要的 Keras 2 实现，版本须与 tensorflow 对应
-# tf-keras==2.21.0
