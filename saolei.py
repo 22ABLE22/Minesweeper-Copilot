@@ -19,8 +19,10 @@ from keras.models import load_model
 from multiprocess import Pool
 from pynput.keyboard import KeyCode, Listener
 
+# P1 颜色复核用：label_by_color 只按笔画颜色判数字，与 CNN 完全是两条独立路径
+from collect import PALETTE as DIGIT_COLORS, label_by_color, next_index
 from config import *
-from minesolver import hint as mine_hint
+from minesolver import build_constraints, hint as mine_hint, solve_prob as mine_prob
 from time import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -61,32 +63,35 @@ if _mismatch:
     print('[model] %s；请用 train_img.py 重训后再运行' % _mismatch)
 
 
-# 获取截图
-def screen_shoot(rows=ROWS, cols=COLS, region=BG_REGION):
-    resize_shape = (32, 32)
-    board = []
+# 获取截图：按 config 的几何抓一次屏，切成原分辨率的格子。
+# 一次抓屏只切一遍，CNN 用它缩放到 32x32，颜色复核用它按原始像素判色——
+# 两条识别路径看的是同一张图，所以复核的结论才真的独立可信。
+def grab_cells(rows=ROWS, cols=COLS, region=BG_REGION):
     back_ground = np.array(pyautogui.screenshot(region=region))
+    cells = []
     for j in range(rows):
-        board_r = []
+        line = []
         for i in range(cols):
             l, u, r, d = [int(o) for o in
                           (i * cols_size, j * row_size, i * cols_size + cols_size, j * row_size + row_size)]
-            crop = back_ground[u:d + 1, l:r + 1]
-            crop = Image.fromarray(crop).resize(resize_shape)  # 将数组转成图像，resize之后再转成数组
-            crop = np.array(crop)
-            board_r.append(crop)
-        board.append(board_r)
-    return board
+            line.append(Image.fromarray(back_ground[u:d + 1, l:r + 1]))
+        cells.append(line)
+    return cells
+
+
+def screen_shoot(rows=ROWS, cols=COLS, region=BG_REGION):
+    """把棋盘切成 32x32 的数组，供显示 / 训练样本记录使用。"""
+    cells = grab_cells(rows, cols, region)
+    return [[np.array(cell.resize((32, 32))) for cell in line] for line in cells]
 
 
 # 使用cnn识别图像
-def get_cnn_board(model, rows=ROWS, cols=COLS, region=BG_REGION):
+def get_cnn_board(model, cells=None, rows=ROWS, cols=COLS, region=BG_REGION):
     # 将所有格子层叠排列，一起输入到cnn，比一个一个输入cnn计算速度快很多
-    board = screen_shoot(rows, cols, region)
-    sq_board = []
-    for i in range(len(board)):
-        sq_board += board[i]
-    sq_board = np.array(sq_board) / 255.
+    if cells is None:
+        cells = grab_cells(rows, cols, region)
+    sq_board = np.array([[np.array(cell.resize((32, 32))) for cell in line]
+                         for line in cells]) / 255.
 
     sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)  # 直接调用比 model.predict 快一倍多
     sq_pred = np.array([net_decoder[i] for i in sq_pred])  # 解码cnn的预测值
@@ -287,11 +292,88 @@ def print_safety_hint(board):
               % (i, r + 1, c + 1, 100.0 * prob, mark))
 
 
+# ---------------------------------------------------------------- 点击前的两道复核
+# 推理本身从不点雷（模拟验证 3000+ 次点击零失误），炸雷全部来自「数字被认错」：
+# 6 被读成 4，周围「还剩 2 颗雷」提前成立，于是把真雷判成安全格。所以能不能不炸雷，
+# 取决于能不能在上鼠标之前发现识别错了。两道复核都只做一件事：发现不确定就停。
+#
+# 便宜的那道（P1）先跑：颜色只看笔画，和神经网络毫无关系，认错数字时几乎必然对不上。
+
+PROB_SAFE = 0.0  # 只点「在所有一致解里都不是雷」的格子：概率必须严格为 0
+
+
+def verify_by_color(board, cells):
+    """P1：用数字笔画配色独立复核 CNN。返回冲突 [(行, 列, CNN 认成, 颜色认为)]。
+
+    只复核 1~6 这类有固定配色的数字格；空块、未翻开、旗子、地雷没有配色，
+    label_by_color 返回 None，不算冲突。行列是 0 基数（直接索引 board）。
+    """
+    if not VERIFY_BY_COLOR:
+        return []
+    conflicts = []
+    rows, cols = board.shape
+    for r in range(rows):
+        for c in range(cols):
+            v = int(board[r, c])
+            if v not in DIGIT_COLORS:  # 只有 1~6 有配色，其余跳过
+                continue
+            color = label_by_color(cells[r][c])
+            if color is not None and color != v:
+                conflicts.append((r, c, v, color))
+    return conflicts
+
+
+def save_color_conflicts(conflicts, cells):
+    """把颜色复核发现的不一致格子存进 samples/：颜色给的标签是准的，是白捡的难样本。"""
+    saved = 0
+    for r, c, cnn, color in conflicts:
+        try:
+            folder = os.path.join(SAMPLES_PATH, str(color))
+            os.makedirs(folder, exist_ok=True)
+            name = '%d_%04d.png' % (color, next_index(folder, color))
+            cells[r][c].save(os.path.join(folder, name))
+            saved += 1
+        except Exception:
+            pass
+    return saved
+
+
+def verify_by_prob(board, to_click):
+    """P0：点击前算全盘概率，只放行概率严格为 0 的格子。
+
+    返回 (放行的格子, 被拦下的 [(行, 列, 概率)], info)。
+    info['reason'] 非空表示整盘都不该点：'contra' 约束自相矛盾、
+    'too_hard' 局面太大算不出、'normal' 正常放行。
+    """
+    info = {'reason': 'normal', 'checked': VERIFY_BY_PROB}
+    if not VERIFY_BY_PROB or not to_click:
+        return list(to_click), [], info
+    _, _, contradictions = build_constraints(board)
+    if contradictions:
+        # 约束互斥只可能是识别错或标旗错，此时任何「安全」结论都不可信。
+        info['reason'] = 'contra'
+        info['contradictions'] = contradictions
+        return [], [], info
+    p = mine_prob(board)
+    if p is None:
+        info['reason'] = 'too_hard'
+        return [], [], info
+    safe, risky = [], []
+    for r, c in to_click:
+        prob = float(p[r - 1, c - 1])  # deal_board 的坐标是 1 基数
+        if prob <= PROB_SAFE:
+            safe.append((r, c))
+        else:
+            risky.append((r, c, prob))
+    return safe, risky, info
+
+
 _LAST_ROUND = {'sig': None}  # 上一轮实际执行的 (点击, 标雷) 组合，用于兜底检测空转
 
 
 def game_once(duration=0.01, interval=0.01, auto_flag=False):
-    board = get_cnn_board(model)
+    cells = grab_cells()  # 只抓一次屏：CNN 和颜色复核看同一张图
+    board = get_cnn_board(model, cells)
     boom = find_boom(board)
     if boom:
         r, c = boom[0]
@@ -301,6 +383,48 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
 
     print('click_pos', to_click)
     print('flag_pos', to_flag, '(自动标雷：旗由游戏插)' if auto_flag else '')
+
+    if to_click:  # 没有要点的格子时不必复核，直接走下面的死局分支
+        # P1 颜色复核：CNN 与笔画配色不一致，说明至少有一格认错了。
+        # 认错的那格可能正是被当成「安全」的雷，所以整轮放弃，一格都不点。
+        conflicts = verify_by_color(board, cells)
+        if conflicts:
+            saved = save_color_conflicts(conflicts, cells)
+            print('[verify] 颜色复核发现 %d 处识别冲突，本轮不点击：' % len(conflicts))
+            for r, c, cnn, color in conflicts[:6]:
+                print('           第 %2d 行第 %2d 列：CNN 认成 %d，笔画颜色说明是 %d'
+                      % (r + 1, c + 1, cnn, color))
+            if len(conflicts) > 6:
+                print('           ……另有 %d 处' % (len(conflicts) - 6))
+            if saved:
+                print('           已把这 %d 格存进 samples/ 当难样本，筛完并入 imgs/ 可重训。' % saved)
+            print('           请手动确认这几格，或检查标定 / 窗口是否被遮挡，然后按 B 继续。')
+            return False
+
+        # P0 概率复核：只放行「在所有一致解里都不是雷」的格子。
+        safe, risky, pinfo = verify_by_prob(board, to_click)
+        if pinfo['reason'] == 'contra':
+            print('[verify] 棋盘约束自相矛盾 %d 处，说明有格子被认错，本轮不点击。'
+                  % pinfo['contradictions'])
+            print('         请手动核对棋盘后按 B 继续；若反复出现，检查标定与窗口缩放。')
+            print_safety_hint(board)
+            return False
+        if pinfo['reason'] == 'too_hard':
+            print('[verify] 局面太大算不出概率，无法确认安全，本轮不点击。')
+            print('         可以直接按 B 跳过复核（改 config.VERIFY_BY_PROB = False），但会失去这层保险。')
+            return False
+        if risky:
+            print('[verify] 概率复核拦下 %d 格（推理说是安全，全盘概率不是 0）：' % len(risky))
+            for r, c, prob in risky[:6]:
+                print('           第 %2d 行第 %2d 列   中雷概率 %5.1f%%'
+                      % (r + 1, c + 1, 100.0 * prob))
+            if safe:
+                print('         其余 %d 格概率为 0，照常点击。' % len(safe))
+            else:
+                print('         没有一格概率为 0，本轮不点击。')
+                print_safety_hint(board)
+                return False
+            to_click = safe
 
     for lc in sorted(to_click):
         click_cell(lc[0], lc[1], duration=duration, interval=interval)
