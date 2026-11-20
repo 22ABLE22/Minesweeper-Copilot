@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """从真实棋盘采集训练样本，标签来自数字颜色，不依赖模型预测。
 
-为什么用颜色打标签：游戏里数字的颜色是固定的（1 蓝、2 绿、3 红、4 靛蓝、
-5 暗红、6 青、7 黑），所以「青色的 6」一定能拿到标签 6，不会出现
-「模型把它认成 4，于是样本被存进 4 的文件夹」这种把错误标签固化下来的问题。
+为什么用颜色打标签：游戏里数字的颜色是固定的（3 红、4 靛蓝、5 暗红、6 青），
+所以「青色的 6」一定能拿到标签 6，不会出现「模型把它认成 4，于是样本被存进
+4 的文件夹」这种把错误标签固化下来的问题。
 
-采集数字格（1..7）和爆炸的红雷（10）。数字靠笔画颜色认；红雷靠「整格红底 + 黑色雷」
-认——它和红色的 3 的区别在于 3 只有笔画是红的、底色仍是灰的。
-空块、未翻开、旗子和普通地雷用颜色区分不可靠，这些类别继续用 imgs/ 里的样本。
+只采集 COLLECT_CLASSES 里列出的类别（3、4、5、6 和爆炸的红雷 10）：
+1、2 太常见，跑几局就溢出；7 与普通地雷同为纯黑，排色分不开，实战也几乎不出现，
+直接从类别表里去掉。空块、未翻开、旗子、普通地雷这些形状类继续用 imgs/ 的样本。
 
 用法:
     python collect.py                       # 抓一次当前屏幕
@@ -33,8 +33,20 @@ PALETTE = {
     4: (0, 0, 128),
     5: (128, 0, 0),
     6: (0, 128, 128),
-    7: (0, 0, 0),
 }
+
+# 只采集这些类别：3、4、5、6 稀有且容易认错，加上爆炸的红雷 10。
+# 1、2 跑几局就够用；7 与地雷同为纯黑，排色区分不开，且实战几乎不出现。
+COLLECT_CLASSES = (3, 4, 5, 6, 10)
+
+# 笔画覆盖率的硬下限。旗子的红三角只占 0.31~0.35，是所有类里最低的，
+# 而真正的数字都在 0.43 以上，所以这条线能把旗子挡在外面（旗本来会把红三角
+# 送去 3 或 5）。0.40 相对旗子留了 14% 余量，相对 4 也留了 7%。
+MIN_INK_COVER = 0.40
+
+# 暗红底（棋盘的底色 / 5 的笔画）占比。5 的笔画本身就是暗红，覆盖率 0.41 以上；
+# 旗子的底座加起来不到 0.05。这条用来再兜一次底。
+MIN_DARK_RED = 0.20
 
 # 爆炸的红雷：踩中的那颗雷是整格红底 + 黑色雷。红色像素占比要够大，
 # 同时红 + 黑几乎铺满整格；红色的 3 只有笔画是红的，红+黑远达不到这个比例。
@@ -67,7 +79,7 @@ def split_cells(region_img, rows=ROWS, cols=COLS):
 
 
 def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
-    """按颜色判断格子类别（1..7 数字，10 爆炸的红雷）。无法确定时返回 None。"""
+    """按颜色判断格子类别，只返回 COLLECT_CLASSES 里的值。其余一律 None。"""
     a = np.asarray(cell, dtype=np.int16)
     h, w = a.shape[:2]
     # 去掉四周的可能残留的格子边框
@@ -82,7 +94,7 @@ def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
     sat = b.max(axis=2) - b.min(axis=2)
     lum = b.sum(axis=2) / 3.0
     ink = (sat > 90) | (lum < 60)
-    if ink.sum() < min_ink:
+    if ink.sum() < min_ink or ink.mean() < MIN_INK_COVER:
         return None
     px = b[ink]
     col = np.median(px, axis=0)
@@ -92,7 +104,11 @@ def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
     dsecond = order[1][1]
     if dbest > max_dist or dsecond - dbest < margin:
         return None
-    return best
+    if best == 5:
+        dark_red = (b[:, :, 0] > 40) & (b[:, :, 0] < 130) & (b[:, :, 1] < 60) & (b[:, :, 2] < 60)
+        if dark_red.mean() < MIN_DARK_RED:
+            return None
+    return best if best in COLLECT_CLASSES else None
 
 
 def next_index(folder, digit):

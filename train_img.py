@@ -8,7 +8,7 @@
 
 数据来源:
     imgs/          手工整理的样本（按类别分文件夹，文件夹名是 net_encoder 的键）
-    samples/auto/  collect.py 每局结束时按数字颜色自动采集的样本（只有 1..7）
+    samples/auto/  collect.py 每局结束时按数字颜色自动采集的样本（只收 3、4、5、6、10）
 
 训练集用数据增强（平移、缩放、亮度、对比度、轻微模糊）把每类补到 --per-class 张，
 验证集只用未增强的原始图片，保证报告的是真实分布下的准确率。
@@ -25,6 +25,7 @@ logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 import argparse
 import glob
+import json
 import random
 
 import numpy as np
@@ -35,6 +36,7 @@ from config import SAMPLES_PATH, TRAIN_PATH, net_decoder, net_encoder
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_OUT = os.path.join(BASE_DIR, 'recognize_new.keras')
+MODEL_CLASSES = os.path.join(BASE_DIR, 'recognize_new.classes.json')
 
 
 def scan_sources(sources):
@@ -212,6 +214,12 @@ def main():
 
     model.save(MODEL_OUT)
     print('[train] 已保存 %s (%d bytes)' % (MODEL_OUT, os.path.getsize(MODEL_OUT)))
+
+    # 把训练时的类别表一起存下来，推理端据此判断模型与 config 是否配套。
+    # 只比「类数」不够：改过类别表但类数没变（例如删 7 再加回来）会静默错位。
+    with open(MODEL_CLASSES, 'w', encoding='utf-8') as f:
+        json.dump(net_encoder, f, ensure_ascii=False, indent=1)
+    print('[train] 类别表已写入 %s' % MODEL_CLASSES)
 
     if len(vx):
         report(vx, vy, model)

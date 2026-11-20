@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sys
@@ -33,9 +34,35 @@ from collect import collect_board
 BOOM_CLASS = 10
 
 model = load_model(MODEL_PATH)  # 已训练的CNN（Keras 3 的 .keras 格式）
-if int(model.layers[-1].units) != len(net_encoder):
-    print('[model] 当前模型输出 %d 类，config 里有 %d 类（新增 10=爆炸的红雷）；'
-          '红雷要重训后才认得出来' % (int(model.layers[-1].units), len(net_encoder)))
+
+# 模型必须与 config 的类别表配套。只比类数不够：删掉一个类又加回另一个，
+# 类数相同但下标全错位，模型会静默地给出错误结果。train_img.py 会把训练时的
+# 类别表写成同名的 .classes.json，这里逐项比对。
+MODEL_CLASSES_PATH = os.path.join(BASE_DIR, 'recognize_new.classes.json')
+
+
+def check_model_classes():
+    """模型类别表与 config 不一致时返回一句提示，一致或无从判断时返回 None。"""
+    if int(model.layers[-1].units) != len(net_encoder):
+        return ('当前模型输出 %d 类，config 里有 %d 类' % (
+            int(model.layers[-1].units), len(net_encoder)))
+    if not os.path.exists(MODEL_CLASSES_PATH):
+        # 没有类别表就无从核对。类数相同但下标错位是最危险的情况，
+        # 因此这里不当作通过，而是提醒重训。
+        return '模型旁没有 %s，无法确认类别对应关系' % os.path.basename(MODEL_CLASSES_PATH)
+    try:
+        with open(MODEL_CLASSES_PATH, encoding='utf-8') as f:
+            trained = {int(k): int(v) for k, v in json.load(f).items()}
+    except Exception:
+        return None
+    if trained != net_encoder:
+        return ('模型的类别表与 config 不一致，模型训练时的类别表是 %s' % trained)
+    return None
+
+
+_mismatch = check_model_classes()
+if _mismatch:
+    print('[model] %s；请用 train_img.py 重训后再运行' % _mismatch)
 
 
 # 获取截图
