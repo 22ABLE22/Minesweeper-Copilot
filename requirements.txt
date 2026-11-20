@@ -1,0 +1,12 @@
+# Python 3.10 - 3.12（建议用 conda 环境，见 README）
+# 注意：PyPI 上不存在 PIL 和 tensorflow2 这两个包，正确名字是 pillow 和 tensorflow
+tensorflow>=2.16,<2.22
+numpy
+matplotlib
+pyautogui
+pillow
+multiprocess
+pynput
+
+# 仅在需要转换旧的 SavedModel 目录（recognize_new/）时才装，版本要和 tensorflow 对应：
+# tf-keras==2.21.0

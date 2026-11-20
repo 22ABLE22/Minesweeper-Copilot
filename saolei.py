@@ -1,3 +1,5 @@
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pyautogui
@@ -9,7 +11,9 @@ from pynput.keyboard import KeyCode, Listener
 from config import *
 from time import time
 
-model = load_model('recognize_new')  # 已训练的CNN
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'recognize_new.keras')
+model = load_model(MODEL_PATH)  # 已训练的CNN（Keras 3 的 .keras 格式）
 
 
 # 获取截图
@@ -101,6 +105,8 @@ def record_board(model, path=PATH):
     sq_pred = np.argmax(model.predict(sq_board), axis=1)
     sq_pred = np.array([net_decoder[i] for i in sq_pred])
     sq_pred = sq_pred.reshape((ROWS, COLS))
+    for _cls in net_encoder:  # 首次记录时类别子目录可能还不存在，先建好
+        os.makedirs(os.path.join(path, str(_cls)), exist_ok=True)
     for i in range(ROWS):
         for j in range(COLS):
             save_path = path + '\\' + str(sq_pred[i][j]) + '\\' + str(sq_pred[i][j]) + '_' + str(

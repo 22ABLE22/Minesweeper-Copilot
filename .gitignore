@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 由 model_and_data.zip 解压出来的数据，不入库
+imgs/
+recognize_new/
+dir/
+
+# 截图/调试产物
+screen*.png
+screenshots/
+
