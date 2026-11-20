@@ -12,11 +12,11 @@ import os
 #   x, y : 棋盘左上角在屏幕上的坐标（要贴着第一格的左上角，不要把窗口边框算进去）
 #   w, h : 棋盘整体的宽、高（只算棋盘，不含标题栏、工具栏、状态栏）
 # 如果习惯用 (x1, y1, x2, y2) 表示，就写成 (x1, y1, x2 - x1, y2 - y1)
-BG_REGION = (441, 278, 1656, 781)
+BG_REGION = (16, 176, 2504, 1176)
 
 # 棋盘行数、列数（必须和游戏里设置的完全一致，否则格子会被切错）
-ROWS = 25
-COLS = 53
+ROWS = 30
+COLS = 64
 
 # 单个格子的像素尺寸（由上面三个值推导，只读，不要手改）
 row_size = BG_REGION[3] / ROWS
@@ -44,6 +44,3 @@ TRAIN_PATH = os.path.join(BASE_DIR, 'imgs')
 
 # 按 R 键记录新样本的目录（同样按类别分子文件夹）
 RECORD_PATH = os.path.join(BASE_DIR, 'dir')
-
-# 兼容旧代码里的 PATH
-PATH = RECORD_PATH

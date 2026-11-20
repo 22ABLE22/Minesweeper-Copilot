@@ -2,12 +2,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# 由 model_and_data.zip 解压出来的数据，不入库
-imgs/
-recognize_new/
+# 运行产物
 dir/
-
-# 截图/调试产物
-screen*.png
 screenshots/
+screen*.png
 
+# 可选的本地目录：SavedModel 源模型（convert_legacy_model.py 的输入）
+recognize_new/

@@ -78,21 +78,8 @@ def show_recognized(board):
     plt.show()
 
 
-# 使用pyautogui识别图像
-def get_board(rows=ROWS, cols=COLS, bg_region=BG_REGION, imags=None):
-    # 旧版本使用pyautogui 识别图片，虽然调用的是opencv的接口但耗时太长
-    board = -2 * np.ones((rows, cols), dtype='i2')
-    back_ground = pyautogui.screenshot(region=bg_region)
-    for num in imags:
-        num_locations = pyautogui.locateAll(imags[num], back_ground, confidence=0.99)
-        for loc in num_locations:
-            center = pyautogui.center(loc)
-            board[int(center[1] / row_size), int(center[0] // cols_size)] = num
-    return board
-
-
 # 将识别出来的图片保存到对应文件夹，可以增加训练样本
-def record_board(model, path=PATH):
+def record_board(model, path=RECORD_PATH):
     resize_shape = (32, 32)
     sq_board = []
     back_ground = pyautogui.screenshot(region=BG_REGION)
@@ -110,7 +97,7 @@ def record_board(model, path=PATH):
             crop = np.array(crop)
             sq_board.append(crop)
         crops.append(crops_r)
-    sq_board = np.array(sq_board) / 255.  # 与推理端一致：模型吃 0~1，原版漏了这一步，存档会存进错误类别
+    sq_board = np.array(sq_board) / 255.  # 与推理端一致：模型输入是 0~1 的浮点
     sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)
     sq_pred = np.array([net_decoder[i] for i in sq_pred])
     sq_pred = sq_pred.reshape((ROWS, COLS))
@@ -265,7 +252,7 @@ def on_press(key):
             game_all()
 
         elif key.char == 'r':
-            record_board(model)
+            record_board(model, path=RECORD_PATH)
 
         elif key.char == 's':  # 显示识别结果
             pool = Pool(1)

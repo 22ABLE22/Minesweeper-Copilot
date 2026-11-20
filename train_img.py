@@ -54,7 +54,7 @@ def load_data(sample_num, root=TRAIN_PATH):
         labels += [label] * len(imgs)
 
     if not paths:
-        raise SystemExit('[train] %s 下没有找到训练图片，请先解压 model_and_data.zip' % root)
+        raise SystemExit('[train] %s 下没有找到训练图片，样例数据见仓库的 imgs/' % root)
 
     n = min(sample_num, len(paths))
     idx = random.sample(range(len(paths)), n)

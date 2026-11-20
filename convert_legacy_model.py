@@ -1,21 +1,23 @@
 # -*- coding: utf-8 -*-
-"""把老版本 Keras 2 / TF 2.x 存出来的 SavedModel 目录转成 Keras 3 的 .keras 文件。
+"""把 SavedModel 目录（saved_model.pb + variables/）转成 Keras 3 的 .keras 文件。
 
-背景: model_and_data.zip 里的 recognize_new/ 是一个 SavedModel 目录，
-      Keras 3 的 load_model() 已经不认识这个格式，会报
-      ValueError: File format not supported: filepath=recognize_new.
-      仓库里已经放好了转换结果 recognize_new.keras，正常不用跑本脚本。
+Keras 3 的 load_model() 只接受 .keras（V3）与 legacy .h5，SavedModel 目录需要
+用 tf-keras 读进来再重建，本脚本就是这条转换链路：
 
-依赖: pip install tf-keras==2.21.0   （版本号要和 tensorflow 对应）
+    1. tf_keras.models.load_model(src)          读出 SavedModel 的层与权重
+    2. cnn_model.build_model()                  建同构网络
+    3. 逐层 set_weights                         复制权重
+    4. new.save(dst)                            写成 .keras
+
+不直接另存为 .keras 的原因：SavedModel 里的层带有 batch_input_shape 参数，
+Keras 3 读这种文件会报
+    ValueError: Unrecognized keyword arguments passed to Conv2D: {'batch_input_shape': ...}
+
+依赖: pip install tf-keras==2.21.0   （版本号要与 tensorflow 对应）
 
 用法:
-    python convert_legacy_model.py                     # recognize_new -> recognize_new.keras
-    python convert_legacy_model.py my_old_dir out.keras
-
-为什么不能直接 tf_keras 存成 .keras: 旧模型是按 batch_input_shape 建的 Conv2D,
-Keras 3 读它自己的 .keras 文件时会报
-    ValueError: Unrecognized keyword arguments passed to Conv2D: {'batch_input_shape': ...}
-所以这里用 cnn_model.build_model() 新建同构网络，再逐层 set_weights。
+    python convert_legacy_model.py recognize_new recognize_new.keras
+    python convert_legacy_model.py <src_dir> <dst.keras>
 """
 
 import os
@@ -38,14 +40,14 @@ def convert(src, dst):
     try:
         import tf_keras
     except ImportError:
-        sys.exit('需要先安装旧版 Keras: pip install tf-keras==2.21.0')
+        sys.exit('需要先安装 tf-keras: pip install tf-keras==2.21.0')
 
-    print('[convert] 用 tf-keras 读取旧模型: %s' % src)
+    print('[convert] 用 tf-keras 读取 SavedModel: %s' % src)
     old = tf_keras.models.load_model(src, compile=False)
     new = build_model()
 
     if len(new.layers) != len(old.layers):
-        sys.exit('[convert] 层数不一致: 旧 %d / 新 %d' % (len(old.layers), len(new.layers)))
+        sys.exit('[convert] 层数不一致: 源 %d / 目标 %d' % (len(old.layers), len(new.layers)))
 
     for dst_layer, src_layer in zip(new.layers, old.layers):
         w_dst = dst_layer.get_weights()

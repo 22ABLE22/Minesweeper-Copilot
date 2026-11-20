@@ -2,7 +2,7 @@
 """扫雷 CNN 结构（Keras 3）。
 
 训练脚本（train_img.py）与推理脚本（saolei.py）共用这一份定义，
-避免「训练时存成一种格式、推理时又是另一种格式」的历史遗留问题。
+保证两边永远是同一套层结构与预处理。
 
 输入：32x32x3，RGB，取值 0~1
 输出：11 类 softmax，类别含义见 config.net_encoder
@@ -16,7 +16,7 @@ NUM_CLASSES = 11
 
 
 def build_model(input_shape=INPUT_SHAPE, num_classes=NUM_CLASSES):
-    """构建与原仓库结构完全一致的 CNN（层名、层序都不变，可无损继承旧权重）。"""
+    """构建 CNN。层序与权重形状固定，改了结构就无法复用已有权重。"""
     model = keras.Sequential(
         [
             keras.Input(shape=input_shape),
