@@ -270,6 +270,9 @@ def find_boom(board):
     return [(int(r), int(c)) for r, c in hits]
 
 
+_LAST_ROUND = {'sig': None}  # 上一轮实际执行的 (点击, 标雷) 组合，用于兜底检测空转
+
+
 def game_once(duration=0.01, interval=0.01, auto_flag=False):
     board = get_cnn_board(model)
     boom = find_boom(board)
@@ -291,9 +294,29 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
         for lc in sorted(to_flag):
             click_cell(lc[0], lc[1], right=True, duration=duration, interval=interval)
 
-    if not to_click and not to_flag:
-        print('[deadlock] 没有能确定推理的格子。请手动点开一格（猜），然后按 B 继续，')
-        print('           或按 Z 只点安全格（游戏会自动插旗）。')
+    # 判断「这一轮到底有没有动手」。自动标雷模式下不发右键，所以旗子不算动作：
+    # 如果只推得出旗、推不出可点的安全格，这一轮一次鼠标都不会动，棋盘不会有任何
+    # 变化，下一轮必然得到完全相同的结果 —— 那就是死循环，必须在这里停住。
+    sig = (tuple(sorted(to_click)), tuple(sorted(to_flag)) if not auto_flag else ())
+    repeated = sig == _LAST_ROUND['sig']
+    _LAST_ROUND['sig'] = sig
+
+    actions = len(to_click) + (0 if auto_flag else len(to_flag))
+    if actions == 0:
+        if to_flag:
+            print('[deadlock] 只推得出 %d 个雷，没有可以确定安全、可以点开的格子。' % len(to_flag))
+            print('           自动标雷模式下旗子由游戏插，程序不发右键，所以这一轮无事可做。')
+        else:
+            print('[deadlock] 没有能确定推理的格子。')
+        print('           请手动点开一格（猜），然后按 B 继续，或按 Z 只点安全格。')
+        print('           Z 模式需要先在游戏里打开「自动标雷」，否则旗子插不上，会一直停在这里。')
+        return False
+    # 兜底：动作一模一样地重复，说明点了也没生效（坐标标定不对、窗口被遮挡、
+    # 或游戏已经结束）。再跑下去就是无限循环，停住让人看一眼。
+    if repeated:
+        print('[stuck] 连续两轮要执行的动作完全相同 %d 个，点了没有产生任何变化。' % actions)
+        print('        常见原因：标定坐标与实际棋盘不符、游戏窗口被别的窗口挡住、本局已经结束。')
+        print('        请先跑 calibrate.py 重新标定，或手动点开一格后按 B 继续。')
         return False
     return True
 
@@ -315,6 +338,7 @@ def collect_after_game():
 
 
 def game_all(auto_flag=False):
+    _LAST_ROUND['sig'] = None  # 每次按 B/Z 都是一次新的连续执行，重复检测从零开始
     while game_once(auto_flag=auto_flag):
         pass
     collect_after_game()
