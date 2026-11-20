@@ -215,31 +215,79 @@ def deal_board(board):
     return to_click, to_flag
 
 
-def game_once(duration=0.01, interval=0.01):
+def click_cell(r, c, right=False, duration=0.01, interval=0.01):
+    pos = (BG_REGION[0] + (c - 0.5) * cols_size, BG_REGION[1] + (r - 0.5) * row_size)
+    if right:
+        pyautogui.rightClick(pos, duration=duration)
+    else:
+        pyautogui.click(pos, duration=duration)
+    pyautogui.sleep(interval)
+
+
+def find_auto_flag_clicks(board, to_flag):
+    """自动标雷模式下，用「点数字格」代替「逐个右键插旗」。
+
+    游戏里打开「自动标雷」后，左键点一个已翻开的数字格，若它周围未翻开的
+    格子数量正好等于该数字，游戏会把这些格子直接标成旗。于是点一次数字格
+    就能插好若干面旗，省掉逐个右键的点击与等待。
+
+    只挑「未翻开格恰好等于数字、且这些格子全在本次推理认定的雷集合里」的数字格，
+    保证点到它时游戏插的是旗、而不是把没标旗的格子挖开。
+    返回 (要点击的数字格集合, 已被覆盖的旗子集合)。
+    """
+    rows, cols = board.shape
+    clicks, handled = set(), set()
+    for r in range(rows):
+        for c in range(cols):
+            n = board[r][c]
+            if n <= 0:
+                continue
+            unknown = set()
+            for rr in (r - 1, r, r + 1):
+                for cc in (c - 1, c, c + 1):
+                    if (rr, cc) == (r, c) or not (0 <= rr < rows and 0 <= cc < cols):
+                        continue
+                    if board[rr][cc] == -2:
+                        unknown.add((rr, cc))
+            if unknown and len(unknown) == n and unknown <= to_flag:
+                clicks.add((r, c))
+                handled |= unknown
+    return clicks, handled
+
+
+def game_once(duration=0.01, interval=0.01, auto_flag=False):
     board = get_cnn_board(model)
     to_click, to_flag = deal_board(board)
 
+    num_clicks, handled = set(), set()
+    if auto_flag and to_flag:
+        num_clicks, handled = find_auto_flag_clicks(board, to_flag)
+
     print('click_pos', to_click)
-    print('flag_pos', to_flag)
+    print('flag_pos', to_flag, '(自动标雷)' if auto_flag else '')
+
+    # 自动标雷：先点数字格让游戏自己插旗
+    for lc in sorted(num_clicks):
+        click_cell(lc[0], lc[1], duration=duration, interval=interval)
     for lc in sorted(to_click):
-        r, c = lc
-        pos = (BG_REGION[0] + (c - 0.5) * cols_size, BG_REGION[1] + (r - 0.5) * row_size)
-        pyautogui.click(pos, duration=duration)
-        pyautogui.sleep(interval)
-    for lc in sorted(to_flag):
-        r, c = lc
-        pos = (BG_REGION[0] + (c - 0.5) * cols_size, BG_REGION[1] + (r - 0.5) * row_size)
-        pyautogui.rightClick(pos, duration=duration)
-        pyautogui.sleep(interval)
+        click_cell(lc[0], lc[1], duration=duration, interval=interval)
+    # 数字格覆盖不到的雷（多为子集推理推出的孤立格），仍用右键补齐
+    for lc in sorted(to_flag - handled):
+        if auto_flag:
+            print('  自动标雷覆盖不到，改右键:', lc)
+        click_cell(lc[0], lc[1], right=True, duration=duration, interval=interval)
+
     if not to_click and not to_flag:
-        pyautogui.moveTo(1, 1)  # 没有可操作的格子，鼠标提示结束
+        print('[deadlock] 没有能确定推理的格子。请手动点开一格（猜），然后按 B 继续，')
+        print('           或按 Z 用自动标雷模式继续。')
         return False
     return True
 
 
-def game_all():
-    while game_once():
+def game_all(auto_flag=False):
+    while game_once(auto_flag=auto_flag):
         pass
+    print('[done] 已停止。猜完一步后按 B 继续（自动标雷模式按 Z）。')
 
 
 def on_press(key):
@@ -249,7 +297,10 @@ def on_press(key):
             game_once()
 
         elif key.char == 'b':
-            game_all()
+            game_all(auto_flag=False)
+
+        elif key.char == 'z':  # 自动标雷模式：不发右键，点数字格让游戏插旗
+            game_all(auto_flag=True)
 
         elif key.char == 'r':
             record_board(model, path=RECORD_PATH)
@@ -278,6 +329,7 @@ def start_listen():
 if __name__ == '__main__':
     print('开始监听,按 A 键截图并执行脚本一次,\n'
           '按 B 键截图并执行脚本直到无法推理,\n'
+          '按 Z 键同上，但用「自动标雷」模式（需先在游戏里打开该选项）,\n'
           '按 C 键截图并显示截图结果,\n'
           '按 S 键截图并显示预测结果,\n'
           '按 R 键截图并保存截图到文件夹,\n'
