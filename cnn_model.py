@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """扫雷 CNN 结构（Keras 3）。
 
-训练脚本（train_img.py）与推理脚本（saolei.py）共用这一份定义，
-保证两边永远是同一套层结构与预处理。
+只有训练脚本 train_img.py 导入本文件来建网；推理脚本 saolei.py 不导入它，
+而是直接加载训练好的 recognize_new.keras。所以改了层结构就必须重训，
+旧权重对不上新结构。
 
 输入：32x32x3，RGB，取值 0~1
-输出：softmax，类别数量由 config.net_encoder 决定（当前含爆炸的红雷共 12 类）
+输出：softmax，类别数量由 config.net_encoder 决定（当前 11 类）
 """
 
 import keras

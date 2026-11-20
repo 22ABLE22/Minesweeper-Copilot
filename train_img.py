@@ -10,7 +10,8 @@
     imgs/  全部训练样本（按类别分文件夹，文件夹名是 net_encoder 的键）
     仓库里只跟踪 imgs.tar.gz；imgs/ 不存在时会自动解包（等价于
     python pack_samples.py --extract），解出来的 imgs/ 不入库。
-    collect.py 采到的新样本默认也写进 imgs/，人工筛完直接重训即可
+    collect.py 采到的新样本写在 samples/auto/（config.SAMPLES_PATH），
+    人工筛完并入 imgs/ 再重训；本脚本只读 imgs/，不碰 samples/。
 
 训练集用数据增强（平移、缩放、亮度、对比度、轻微模糊）把每类补到 --per-class 张，
 验证集只用未增强的原始图片，保证报告的是真实分布下的准确率。

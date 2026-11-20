@@ -6,20 +6,36 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `saolei.py` | 主程序：截图 → 识别 → 推理 → 点击，并监听全局按键 |
-| `config.py` | 棋盘区域、行列数、路径、编码表（**换屏幕或窗口必须改**） |
-| `cnn_model.py` | CNN 结构定义，训练与推理共用同一份 |
-| `train_img.py` | 用 `imgs/` 的样本训练（带数据增强），产出 `recognize_new.keras` |
-| `minesolver.py` | 推不动时算出每格的中雷概率，告诉你要猜就点哪一格最安全 |
-| `collect.py` | 按数字颜色从真实棋盘采集带标签样本到 `samples/auto/` |
+| `saolei.py` | 主程序：截图 → 识别 → 推理 → 点击，并监听全局按键；加载 `recognize_new.keras`，推不动时调用 `minesolver.py` |
+| `config.py` | **唯一的参数入口**：棋盘区域、行列数、雷数、类别表、各目录路径（**换屏幕或窗口必须改**） |
+| `cnn_model.py` | CNN 结构定义，只被 `train_img.py` 用来建网；`saolei.py` 直接加载模型文件，不导入它 |
+| `train_img.py` | 用 `imgs/` 的样本训练（带数据增强），产出 `recognize_new.keras` 与 `recognize_new.classes.json` |
+| `minesolver.py` | 推不动时算出每格中雷概率，只被 `saolei.py` 调用，**只给建议不点击** |
+| `collect.py` | 按数字颜色从真实棋盘采集带标签样本到 `samples/auto/`（独立脚本，主程序不调用） |
 | `renumber.py` | 人工筛选完样本后，把某个目录下每个类别重新连续编号 |
 | `calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
-| `recognize_new.keras` | 已训练好的识别模型（Keras 3 格式） |
-| `recognize_new.classes.json` | 训练时的类别表，`saolei.py` 靠它核对模型与 `config.py` 是否配套 |
+| `recognize_new.keras` | 已训练好的识别模型（Keras 3 格式），`saolei.py` 启动时加载 |
+| `recognize_new.classes.json` | 训练时写出的类别表，`saolei.py` 靠它核对模型与 `config.py` 是否配套 |
 | `imgs.tar.gz` | 全部训练样本的压缩包，3027 张，1.7 MB（**仓库只跟踪这一个文件**） |
-| `pack_samples.py` | 把 `imgs/` 打包成 `imgs.tar.gz`，或反过来解包/清点 |
-| `imgs/` | 解包后的训练样本，目录名即类别（`-2`、`-1`、`0`–`9`、`10`）；不入库，训练时自动解包 |
+| `pack_samples.py` | 把 `imgs/` 打包成 `imgs.tar.gz`，或反过来解包/清点；`train_img.py` 缺样本时调用它的 `extract()` |
+| `imgs/` | 解包后的训练样本，目录名即类别（`-2`、`-1`、`0`–`6`、`9`、`10`）；不入库，训练时自动解包 |
 | `samples/auto/` | `collect.py` 新采的样本（人工筛完并入 `imgs/`，不入库） |
+
+整个仓库只有一条数据主线：
+
+```
+屏幕 ──calibrate.py──> config.py (BG_REGION / ROWS / COLS)
+                                 │
+     collect.py / R 键 ──> samples/auto、dir/ ──人工筛选──> imgs/ ──pack_samples.py──> imgs.tar.gz
+                                                                      │
+                                                              train_img.py（+ cnn_model.py）
+                                                                      │
+                                                    recognize_new.keras + .classes.json
+                                                                      │
+                                                 saolei.py（+ minesolver.py、config.py）
+```
+
+`config.py` 是唯一的参数入口，`cnn_model.py` 只服务训练，`minesolver.py` 只服务运行时的概率提示。
 
 ## 环境
 
@@ -139,7 +155,19 @@ python train_img.py --no-augment                      # 不用增强，只训原
 
 采集是**独立脚本**，主程序不再自动调用它——想攒样本时自己在棋盘展开的情况下跑一次。
 
-只收 `COLLECT_CLASSES = (5, 6, 10)` 这三类。5 和 6 在真实棋盘上稀有（6 还曾一直被认成 4），红雷 10 出现频率极低，都必须专门攒；3、4 打几局就过 400 张，1、2 更多，再收只是重复占用磁盘。7 与普通地雷同为纯黑，排色分不开，且实战几乎不出现。
+默认采全部能按颜色区分的类别。范围就是 `collect.py` 顶部的这一行：
+
+```python
+COLLECT_CLASSES = tuple(PALETTE) + (BOOM_LABEL,)   # 1、2、3、4、5、6 加爆炸的红雷 10
+```
+
+仓库自带的样本已经够 1–4 用，但换一台机器、或者想从零重建整套数据集时，全量采集才够用。只想补某几类（比如稀有的 5、6）就把这一行改成子集：
+
+```python
+COLLECT_CLASSES = (5, 6, 10)
+```
+
+`7` 与普通地雷同为纯黑、排色分不开，不在调色板里，永远采不到；空块、未翻开、旗子、普通地雷这些形状类也不按颜色判断，继续用 `imgs/` 里的现成样本。
 
 在棋盘展开的情况下运行：
 
@@ -167,7 +195,7 @@ python collect.py --dry-run       # 只统计不存图
 ### 重训的完整流程
 
 1. 新机器或换了窗口：`python calibrate.py --rows 30 --cols 64`，结果自动写进 `config.py`；
-2. 想补某几类样本：棋盘展开后跑 `python collect.py`，人工筛一遍并入 `imgs/`（见上一节）；
+2. 想补样本：棋盘展开后跑 `python collect.py`，人工筛一遍并入 `imgs/`，再跑 `python renumber.py imgs` 重新编号（见上一节）；
 3. `python train_img.py`，看输出里的混淆矩阵，确认每一类都在 96% 以上；
 4. 补过样本的话，跑 `python pack_samples.py` 重新打包，连同 `recognize_new.keras` 一起提交；
 5. 再跑 `python saolei.py` 实战。
@@ -194,7 +222,7 @@ python collect.py --dry-run       # 只统计不存图
 
 ## 六、算法简述
 
-1. **识别**：整屏裁剪出每个格子，缩放到 32×32，一次性成批送进 CNN（比逐格推理快得多），`argmax` 出 11 类，再按 `net_decoder` 还原成 `-2 / -1 / 0..9`。
+1. **识别**：整屏裁剪出每个格子，缩放到 32×32，一次性成批送进 CNN（比逐格推理快得多），`argmax` 出 11 类，再按 `net_decoder` 还原成 `-2 / -1 / 0..6 / 9 / 10`。
 2. **基础推理**：某数字周围未翻开格数 == 该数字 → 全是旗；某数字周围旗数 == 该数字 → 其余全可点。
 3. **子集推理**：对每个数字格收集「周围未翻开格子集合 S 与剩余雷数 n」，若 S1 ⊂ S2：
    - `n2 - n1 == |S2 - S1|` → `S2 - S1` 全是雷；

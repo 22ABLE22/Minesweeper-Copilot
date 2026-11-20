@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """把样本目录按类别重新编号为 <类别>_<序号>.png。
 
+整理样本的最后一步：collect.py 采到 samples/auto/、人工筛选并入 imgs/ 之后，
+用本脚本让编号从 _0001 连续排下去。编号只求不重名，不代表任何含义，
+train_img.py 也不读它。
+
 用法：
     python renumber.py                     # 处理 samples/auto
     python renumber.py imgs/6              # 只处理一个类别目录

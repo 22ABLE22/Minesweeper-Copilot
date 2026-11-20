@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """标定棋盘几何，并直接写回 config.py。
 
+config.py 是整个仓库唯一的参数入口，本脚本只改其中的 BG_REGION / ROWS / COLS
+三行，其余内容原样保留。saolei.py 与 collect.py 都按这三行切格子，
+所以标定错了它们会一起错。
+
 用法:
     python calibrate.py --rows 30 --cols 64     # 点两下，自动改写 config.py
     python calibrate.py --rows 30 --cols 64 --no-write   # 只看结果，不改文件
