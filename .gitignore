@@ -10,3 +10,4 @@ screen*.png
 
 # 可选的本地目录：SavedModel 源模型（convert_legacy_model.py 的输入）
 recognize_new/
+.backup/
