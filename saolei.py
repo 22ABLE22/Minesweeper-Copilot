@@ -90,8 +90,11 @@ def get_cnn_board(model, cells=None, rows=ROWS, cols=COLS, region=BG_REGION):
     # 将所有格子层叠排列，一起输入到cnn，比一个一个输入cnn计算速度快很多
     if cells is None:
         cells = grab_cells(rows, cols, region)
-    sq_board = np.array([[np.array(cell.resize((32, 32))) for cell in line]
-                         for line in cells]) / 255.
+    # 模型要的是「一堆 32x32 的格子」这一条批次维度，必须摊平成一维；
+    # 写成二维列表推导会得到 (行, 列, 32, 32, 3) 五维，模型会以
+    # "input has incompatible shape" 直接报错。
+    sq_board = np.array([np.array(cell.resize((32, 32)))
+                         for line in cells for cell in line]) / 255.
 
     sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)  # 直接调用比 model.predict 快一倍多
     sq_pred = np.array([net_decoder[i] for i in sq_pred])  # 解码cnn的预测值
