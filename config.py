@@ -12,7 +12,7 @@ import os
 #   x, y : 棋盘左上角在屏幕上的坐标（要贴着第一格的左上角，不要把窗口边框算进去）
 #   w, h : 棋盘整体的宽、高（只算棋盘，不含标题栏、工具栏、状态栏）
 # 如果习惯用 (x1, y1, x2, y2) 表示，就写成 (x1, y1, x2 - x1, y2 - y1)
-BG_REGION = (20, 186, 2500, 1171)
+BG_REGION = (20, 186, 2502, 1174)
 
 # 棋盘行数、列数（必须和游戏里设置的完全一致，否则格子会被切错）
 ROWS = 30
@@ -41,6 +41,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 训练集：每个类别一个子文件夹，文件夹名就是 net_encoder 的键（-2、-1、0..9）
 TRAIN_PATH = os.path.join(BASE_DIR, 'imgs')
+
+# 每局结束时自动采集的样本目录（collect.py 按数字颜色打标签，见 README）
+SAMPLES_PATH = os.path.join(BASE_DIR, 'samples', 'auto')
 
 # 按 R 键记录新样本的目录（同样按类别分子文件夹）
 RECORD_PATH = os.path.join(BASE_DIR, 'dir')

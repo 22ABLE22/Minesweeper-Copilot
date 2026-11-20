@@ -9,11 +9,13 @@
 | `saolei.py` | 主程序：截图 → 识别 → 推理 → 点击，并监听全局按键 |
 | `config.py` | 棋盘区域、行列数、路径、编码表（**换屏幕或窗口必须改**） |
 | `cnn_model.py` | CNN 结构定义，训练与推理共用同一份 |
-| `train_img.py` | 用 `imgs/` 里的样本训练，产出 `recognize_new.keras` |
-| `calibrate.py` | 交互式标定棋盘区域，打印可直接粘贴的配置 |
+| `train_img.py` | 用 `imgs/` 与 `samples/auto/` 的样本训练（带数据增强），产出 `recognize_new.keras` |
+| `collect.py` | 按数字颜色从真实棋盘采集带标签样本到 `samples/auto/` |
+| `calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
 | `convert_legacy_model.py` | 可选：把 SavedModel 目录转成 `.keras` |
 | `recognize_new.keras` | 已训练好的识别模型（Keras 3 格式） |
 | `imgs/` | 训练样本，目录名即类别（`-2`、`-1`、`0`–`9`） |
+| `samples/auto/` | 每局结束自动采集的样本（本地生成，不入库） |
 
 ## 环境
 
@@ -44,7 +46,7 @@ pip install -r requirements.txt
 python calibrate.py --rows 30 --cols 64
 ```
 
-会弹出一张全屏截图：先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**，回车后终端打印可直接粘贴进 `config.py` 的 `BG_REGION`，并校验单格是否接近正方形。
+会弹出一张全屏截图：先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**，回车后终端打印 `BG_REGION`、校验单格是否接近正方形，并**直接把结果写回 `config.py`**（加 `--no-write` 则只看不改，用 `git checkout config.py` 撤销）。
 
 没有图形界面时用 `python calibrate.py --snap`，它把截图存到 `screenshots/calib.png`，用画图量出坐标后手填。
 
@@ -100,9 +102,14 @@ python convert_legacy_model.py recognize_new recognize_new.keras
 ## 四、训练自己的模型
 
 ```powershell
-python train_img.py                       # 默认 1000 张样本、4 个 epoch
-python train_img.py --samples 3000 --epochs 8 --no-plot
+python train_img.py                                   # imgs/ + samples/auto/ 一起训
+python train_img.py --epochs 20 --per-class 200       # 每类增强到 200 张
+python train_img.py --sources imgs --no-augment       # 只用原始样本
 ```
+
+默认会把每类用增强补到 150 张（随机平移 ±3px、缩放 0.88–1.12、亮度/对比度扰动、轻微高斯模糊），
+验证集只取**未增强**的原始图片（每类 15%），所以打印出来的准确率代表真实分布下的水平。
+训练结束会输出混淆矩阵和逐类准确率，低于 95% 的类别会单独列出来——**先看这张表，再拿去实战**。
 
 数据要求：`imgs/<类别>/*.png`，目录名必须是 `config.net_encoder` 的键：
 
@@ -113,7 +120,30 @@ python train_img.py --samples 3000 --epochs 8 --no-plot
 | `0`–`8` | 已翻开、周围八格的地雷数 |
 | `9` | 翻开的地雷 |
 
-扩充样本：用 `S` 键确认程序认得出当前棋盘，再按 `R` 批量存到 `dir/`；人工剔掉错标的，挪进 `imgs/<类别>/` 后重训。
+### 采集真实样本（推荐先做这一步）
+
+数字格的颜色就是数字本身（1 蓝、2 绿、3 红、4 靛蓝、5 暗红、6 青、7 黑），所以
+`collect.py` 直接按颜色给格子打标签，**不经过模型预测**——不会出现「6 被认成 4，于是样本写进 4 的目录」这种把错误标签固化下来的情况。
+
+`saolei.py` 在**每局结束**（`B` / `Z` 停下来时）自动跑一次采集，把整盘数字格存进 `samples/auto/<数字>/`，终端会打印本次采到多少张。
+也可以在棋盘明确展开时单独跑：
+
+```powershell
+python collect.py                 # 抓当前屏幕
+python collect.py --sheet         # 顺带输出缩略图拼板，肉眼抽查十秒
+python collect.py --dry-run       # 只统计不存图
+```
+
+颜色判不准、太淡、被遮挡的格子会被直接丢弃（宁可少收，也不收错标签）。多打几局、每类攒到 100 张以上就值得重训。
+
+`R` 键走的是另一条路：按**模型预测**存进 `dir/<类别>/`，属于伪标签，适合补 `-2`（未翻开）、`-1`（旗子）、`0`（空块）、`9`（地雷）这些形状类；数字类请用 `collect.py`，否则错标的样本会让模型越训越差。
+
+### 重训的完整流程
+
+1. 新机器或换了窗口：`python calibrate.py --rows 30 --cols 64`，结果自动写进 `config.py`；
+2. 打几局，让 `saolei.py` 把样本攒进 `samples/auto/`（每类 100 张以上，重点补 5、6、7）；
+3. `python train_img.py --epochs 20`，看输出里的混淆矩阵，确认 6 不再被判成 4、数字类都在 96% 以上；
+4. 再跑 `python saolei.py` 实战。
 
 ## 五、常见问题
 
@@ -125,6 +155,9 @@ python train_img.py --samples 3000 --epochs 8 --no-plot
 
 **识别出大量错误数字**
 多半是显示缩放或浏览器缩放不是 100%，格子被压扁后与训练样本不一致。把缩放调回 100%，或重新标定并补样本重训。
+
+**某几个数字（比如 6）总是认错**
+训练样本太少且不平衡：仓库自带的 `imgs/6` 只有 4 张，而 1–4 各 20 张，模型对 6 基本没有泛化能力。打几局让 `samples/auto/` 攒够样本，再 `python train_img.py --epochs 20` 重训，并在混淆矩阵里确认 6 与 4 不再互串。
 
 **`ModuleNotFoundError`**
 依赖没装全，重跑 `pip install -r requirements.txt`。

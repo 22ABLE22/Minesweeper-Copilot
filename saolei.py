@@ -22,6 +22,11 @@ from time import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'recognize_new.keras')
+
+# 每局结束时自动采集样本（collect.py 按数字颜色打标签，标签不会写错）
+COLLECT_ON_GAME_END = True
+
+from collect import collect_board
 model = load_model(MODEL_PATH)  # 已训练的CNN（Keras 3 的 .keras 格式）
 
 
@@ -246,9 +251,26 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
     return True
 
 
+def collect_after_game():
+    """一局结束后把整盘数字格按颜色采集下来，作为重训样本。"""
+    if not COLLECT_ON_GAME_END:
+        return
+    try:
+        counts = collect_board(verbose=False)
+    except Exception as exc:  # 采集失败绝不影响游戏流程
+        print('[collect] 采集失败:', exc)
+        return
+    total = sum(counts.values())
+    if total:
+        print('[collect] 本局结束，采集 %d 张：%s' % (total, dict(sorted(counts.items()))))
+    else:
+        print('[collect] 本局结束，没有采到数字格（棋盘可能已被重置或被窗口遮挡）')
+
+
 def game_all(auto_flag=False):
     while game_once(auto_flag=auto_flag):
         pass
+    collect_after_game()
     print('[done] 已停止。猜完一步后按 B 继续（自动标雷模式按 Z）。')
 
 

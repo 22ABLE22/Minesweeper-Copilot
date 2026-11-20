@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""标定 config.py 里的 BG_REGION / ROWS / COLS。
+"""标定棋盘几何，并直接写回 config.py。
 
 用法:
-    python calibrate.py                        # 拍全屏截图，在弹窗里点两下
-    python calibrate.py --rows 25 --cols 53    # 顺便校验格子是不是正方形
-    python calibrate.py --snap                 # 只存截图，自己用画图量坐标
+    python calibrate.py --rows 30 --cols 64     # 点两下，自动改写 config.py
+    python calibrate.py --rows 30 --cols 64 --no-write   # 只看结果，不改文件
+    python calibrate.py --snap                  # 只存截图，自己用画图量坐标
 
 点击顺序: 先点棋盘「最左上一格的左上角」，再点「最右下一格的右下角」。
 点击过程中不要移动/缩放游戏窗口，也不要切走页面。
@@ -12,9 +12,12 @@
 
 import argparse
 import os
+import re
 
 import numpy as np
 import pyautogui
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.py')
 
 
 def snap(out_dir='screenshots'):
@@ -46,11 +49,45 @@ def pick():
     return int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2))
 
 
+def write_config(region, rows=None, cols=None, path=CONFIG_PATH):
+    """把标定结果写回 config.py，返回被改写后的行，方便核对。"""
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        text = f.read()
+
+    wx, wy, ww, wh = region
+    new_text, changed = text, []
+
+    repl = 'BG_REGION = (%d, %d, %d, %d)' % (wx, wy, ww, wh)
+    new_text, n = re.subn(r'^BG_REGION\s*=\s*\([^)]*\)', repl, new_text, count=1, flags=re.M)
+    if n:
+        changed.append(repl)
+
+    for name, value in (('ROWS', rows), ('COLS', cols)):
+        if value is None:
+            continue
+        line = '%s = %d' % (name, value)
+        new_text, n = re.subn(r'^%s\s*=\s*\d+' % name, line, new_text, count=1, flags=re.M)
+        if n:
+            changed.append(line)
+
+    if not changed:
+        print('[calib] 没有找到可改写的行，请手动粘贴到 config.py')
+        return []
+
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        f.write(new_text)
+    print('[calib] 已写入 %s：' % os.path.basename(path))
+    for line in changed:
+        print('    ' + line)
+    return changed
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--rows', type=int, default=None)
     ap.add_argument('--cols', type=int, default=None)
     ap.add_argument('--snap', action='store_true')
+    ap.add_argument('--no-write', action='store_true', help='只打印，不修改 config.py')
     args = ap.parse_args()
 
     if args.snap:
@@ -60,15 +97,19 @@ def main():
     x1, y1, x2, y2 = pick()
     w, h = x2 - x1, y2 - y1
     print()
-    print('把这行贴进 config.py：')
-    print('    BG_REGION = (%d, %d, %d, %d)' % (x1, y1, w, h))
+    print('BG_REGION = (%d, %d, %d, %d)' % (x1, y1, w, h))
     if args.rows and args.cols:
-        print('    ROWS = %d' % args.rows)
-        print('    COLS = %d' % args.cols)
+        print('ROWS = %d, COLS = %d' % (args.rows, args.cols))
         print('=> 单格 %.2f x %.2f px（两个数应接近，差太多说明点到别的地方了）'
               % (h / args.rows, w / args.cols))
     else:
         print('（补 --rows / --cols 再跑一次，可校验格子尺寸是否接近正方形）')
+
+    if args.no_write:
+        print('[calib] --no-write：没有修改 config.py')
+        return
+    write_config((x1, y1, w, h), args.rows, args.cols)
+    print('[calib] 完成。如需撤销，用 git checkout config.py')
 
 
 if __name__ == '__main__':

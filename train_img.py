@@ -2,15 +2,17 @@
 """训练扫雷识别用的 CNN。
 
 用法:
-    python train_img.py                      # 默认 1000 张样本、4 个 epoch
-    python train_img.py --samples 3000 --epochs 8 --no-plot
+    python train_img.py                          # imgs/ + samples/auto/ 一起训
+    python train_img.py --epochs 20 --per-class 200
+    python train_img.py --sources imgs --no-augment     # 只用原始样本、不做增强
 
-数据: config.TRAIN_PATH（默认 imgs/）下按类别分文件夹，文件夹名必须是
-      config.net_encoder 的键（-2 未翻开、-1 旗子、0..8 数字、9 地雷）。
+数据来源:
+    imgs/          手工整理的样本（按类别分文件夹，文件夹名是 net_encoder 的键）
+    samples/auto/  collect.py 每局结束时按数字颜色自动采集的样本（只有 1..7）
+
+训练集用数据增强（平移、缩放、亮度、对比度、轻微模糊）把每类补到 --per-class 张，
+验证集只用未增强的原始图片，保证报告的是真实分布下的准确率。
 产出: 仓库根目录的 recognize_new.keras（Keras 3 格式），saolei.py 直接加载。
-
-想补充样本：先把游戏摆好，运行 saolei.py 后按 R 键，脚本会把当前棋盘按
-预测类别分别存到 dir/<类别>/ 下；确认无误后把文件挪进 imgs/<类别>/。
 """
 
 import os
@@ -23,55 +25,137 @@ logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 import argparse
 import glob
-import os
 import random
 
-import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 
 from cnn_model import INPUT_SHAPE, NUM_CLASSES, build_model
-from config import TRAIN_PATH, net_encoder
+from config import SAMPLES_PATH, TRAIN_PATH, net_decoder, net_encoder
 
-MODEL_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'recognize_new.keras')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_OUT = os.path.join(BASE_DIR, 'recognize_new.keras')
 
 
-def load_data(sample_num, root=TRAIN_PATH):
-    """把 imgs/ 下所有类别目录里的图片读成 (x, y)，随机抽 sample_num 张。"""
-    paths, labels = [], []
-    for cls_name in sorted(os.listdir(root)):
-        cls_dir = os.path.join(root, cls_name)
-        if not os.path.isdir(cls_dir):
+def scan_sources(sources):
+    """扫描各数据源，返回 {标签: [图片路径]}。"""
+    pools = {}
+    for root in sources:
+        if not os.path.isdir(root):
+            print('[train] 跳过不存在的目录: %s' % root)
             continue
-        try:
-            label = net_encoder[int(cls_name)]
-        except (ValueError, KeyError):
-            print('[train] 跳过无法识别的类别目录: %s' % cls_name)
+        for name in sorted(os.listdir(root)):
+            cls_dir = os.path.join(root, name)
+            if not os.path.isdir(cls_dir):
+                continue
+            try:
+                label = net_encoder[int(name)]
+            except (ValueError, KeyError):
+                continue
+            files = sorted(glob.glob(os.path.join(cls_dir, '*.png')))
+            pools.setdefault(label, []).extend(files)
+    for label in sorted(pools):
+        print('[train] 标签 %2d (%-2s) %d 张' % (label, net_decoder[label], len(pools[label])))
+    return pools
+
+
+def load_image(path):
+    with Image.open(path) as im:
+        return im.convert('RGB').copy()
+
+
+def augment(im):
+    """在原始分辨率上做随机扰动，再交给训练时 resize。"""
+    w, h = im.size
+    bg = im.getpixel((2, 2))
+    scale = random.uniform(0.88, 1.12)
+    im2 = im.resize((max(4, int(w * scale)), max(4, int(h * scale))), Image.BILINEAR)
+    canvas = Image.new('RGB', (w, h), bg)
+    ox = (w - im2.width) // 2 + random.randint(-3, 3)
+    oy = (h - im2.height) // 2 + random.randint(-3, 3)
+    canvas.paste(im2, (ox, oy))
+    if random.random() < 0.5:
+        canvas = ImageEnhance.Brightness(canvas).enhance(random.uniform(0.90, 1.10))
+    if random.random() < 0.4:
+        canvas = ImageEnhance.Contrast(canvas).enhance(random.uniform(0.94, 1.08))
+    if random.random() < 0.35:
+        canvas = canvas.filter(ImageFilter.GaussianBlur(random.uniform(0.3, 0.8)))
+    return canvas
+
+
+def to_array(im, size=INPUT_SHAPE[:2]):
+    return np.asarray(im.resize(size, Image.BILINEAR), dtype=np.float32) / 255.0
+
+
+def build_sets(pools, per_class, val_split, use_aug):
+    """按类别切出验证集，训练集用增强补到 per_class 张。"""
+    train_x, train_y, val_x, val_y = [], [], [], []
+    for label in sorted(pools):
+        files = pools[label]
+        random.shuffle(files)
+        n_val = max(1, int(round(len(files) * val_split))) if len(files) >= 4 else 0
+        val_files, train_files = files[:n_val], files[n_val:]
+        if not train_files:
             continue
-        imgs = glob.glob(os.path.join(cls_dir, '*.png'))
-        print('[train] 类别 %-3s -> 标签 %2d，%d 张' % (cls_name, label, len(imgs)))
-        paths += imgs
-        labels += [label] * len(imgs)
+        for f in val_files:
+            val_x.append(to_array(load_image(f)))
+            val_y.append(label)
+        imgs = [load_image(f) for f in train_files]
+        target = max(per_class, len(imgs)) if use_aug else len(imgs)
+        for i in range(target):
+            im = imgs[i % len(imgs)]
+            if use_aug:
+                im = augment(im)
+            train_x.append(to_array(im))
+            train_y.append(label)
+    x = np.asarray(train_x, dtype=np.float32)
+    vx = np.asarray(val_x, dtype=np.float32)
+    y = np.zeros((len(train_y), NUM_CLASSES), dtype=np.float32)
+    vy = np.zeros((len(val_y), NUM_CLASSES), dtype=np.float32)
+    for i, label in enumerate(train_y):
+        y[i, label] = 1.0
+    for i, label in enumerate(val_y):
+        vy[i, label] = 1.0
+    return x, y, vx, vy
 
-    if not paths:
-        raise SystemExit('[train] %s 下没有找到训练图片，样例数据见仓库的 imgs/' % root)
 
-    n = min(sample_num, len(paths))
-    idx = random.sample(range(len(paths)), n)
-    x = np.zeros((n,) + tuple(INPUT_SHAPE), dtype=np.float32)
-    y = np.zeros((n, NUM_CLASSES), dtype=np.float32)
-    for i, j in enumerate(idx):
-        img = Image.open(paths[j]).convert('RGB').resize(INPUT_SHAPE[:2])
-        x[i] = np.asarray(img, dtype=np.float32) / 255.0
-        y[i, labels[j]] = 1.0
-    return x, y
+def class_weights(labels):
+    counts = np.bincount(labels, minlength=NUM_CLASSES).astype(np.float64)
+    counts[counts == 0] = 1.0
+    w = counts.sum() / (len(counts) * counts)
+    return {i: float(w[i]) for i in range(NUM_CLASSES) if counts[i] > 1}
 
 
-def show_cnn_result(model, x_test, y_test):
+def report(vx, vy, model):
+    pred = np.argmax(np.asarray(model(vx, training=False)), axis=1)
+    true = np.argmax(vy, axis=1)
+    acc = float((pred == true).mean())
+    print('[eval] 验证集 %d 张，整体准确率 %.2f%%' % (len(true), 100.0 * acc))
+    cm = np.zeros((NUM_CLASSES, NUM_CLASSES), dtype=int)
+    for t, p in zip(true, pred):
+        cm[t, p] += 1
+    print('[eval] 混淆矩阵（行=真实，列=预测）：')
+    head = '        ' + ''.join('%4s' % net_decoder[i] for i in range(NUM_CLASSES))
+    print(head)
+    for i in range(NUM_CLASSES):
+        if cm[i].sum() == 0:
+            continue
+        print('  %3s |' % net_decoder[i] + ''.join('%4d' % v for v in cm[i])
+              + '   n=%-3d acc=%.0f%%' % (cm[i].sum(), 100.0 * cm[i, i] / cm[i].sum()))
+    worst = [(net_decoder[i], round(100.0 * cm[i, i] / cm[i].sum())) for i in range(NUM_CLASSES)
+             if cm[i].sum() and cm[i, i] / cm[i].sum() < 0.95]
+    if worst:
+        print('[eval] 准确率低于 95% 的类别:', worst)
+    return acc
+
+
+def plot_history(history):
+    import matplotlib.pyplot as plt
+
     plt.figure()
-    plt.plot(model.history.history['accuracy'], label='train acc')
-    if 'val_accuracy' in model.history.history:
-        plt.plot(model.history.history['val_accuracy'], label='val acc')
+    plt.plot(history.history['accuracy'], label='train acc')
+    if 'val_accuracy' in history.history:
+        plt.plot(history.history['val_accuracy'], label='val acc')
     plt.xlabel('epoch')
     plt.ylabel('accuracy')
     plt.legend()
@@ -81,31 +165,58 @@ def show_cnn_result(model, x_test, y_test):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--samples', type=int, default=1000, help='随机抽取的训练样本数')
-    ap.add_argument('--epochs', type=int, default=4)
-    ap.add_argument('--batch-size', type=int, default=32)
+    ap.add_argument('--sources', default=None, help='逗号分隔的数据目录，默认 imgs 与 samples/auto')
+    ap.add_argument('--per-class', type=int, default=150, help='训练集每类目标张数（增强补足）')
+    ap.add_argument('--val-split', type=float, default=0.15, help='验证集比例（只用原始图片）')
+    ap.add_argument('--epochs', type=int, default=12)
+    ap.add_argument('--batch-size', type=int, default=64)
+    ap.add_argument('--no-augment', action='store_true', help='不做数据增强')
+    ap.add_argument('--no-weights', action='store_true', help='不按类别频率加权')
     ap.add_argument('--no-plot', action='store_true', help='训练完不弹曲线窗口')
+    ap.add_argument('--seed', type=int, default=0)
     args = ap.parse_args()
 
-    x, y = load_data(args.samples)
-    print('[train] 实际样本 %d 张，输入 %s，类别数 %d' % (len(x), x.shape[1:], y.shape[1]))
+    random.seed(args.seed)
+    np.random.seed(args.seed)
 
-    # 95% 训练 / 5% 验证；样本太少时不做验证集，避免 val_accuracy 缺失
-    split = int(len(x) * 0.95)
-    if split >= 50 and len(x) - split >= 5:
-        train_x, train_y = x[:split], y[:split]
-        val = (x[split:], y[split:])
+    if args.sources:
+        sources = [os.path.join(BASE_DIR, p) if not os.path.isabs(p) else p
+                   for p in args.sources.split(',')]
     else:
-        train_x, train_y, val = x, y, None
+        sources = [TRAIN_PATH, SAMPLES_PATH]
+
+    pools = scan_sources(sources)
+    if not pools:
+        raise SystemExit('[train] 没有找到训练图片。样例数据见仓库的 imgs/')
+
+    use_aug = not args.no_augment
+    x, y, vx, vy = build_sets(pools, args.per_class, args.val_split, use_aug)
+    print('[train] 训练集 %d 张（增强=%s），验证集 %d 张，输入 %s，类别数 %d'
+          % (len(x), use_aug, len(vx), x.shape[1:], NUM_CLASSES))
 
     model = build_model()
-    model.fit(train_x, train_y, epochs=args.epochs, batch_size=args.batch_size,
-              validation_data=val, verbose=2)
+    labels = [int(np.argmax(row)) for row in y]
+    cw = None if args.no_weights else class_weights(labels)
+
+    callbacks = []
+    from keras.callbacks import EarlyStopping, ModelCheckpoint
+
+    if len(vx):
+        callbacks = [
+            EarlyStopping(monitor='val_accuracy', patience=5, restore_best_weights=True),
+            ModelCheckpoint(MODEL_OUT, monitor='val_accuracy', save_best_only=True, verbose=0),
+        ]
+    history = model.fit(x, y, epochs=args.epochs, batch_size=args.batch_size,
+                        validation_data=(vx, vy) if len(vx) else None,
+                        class_weight=cw, callbacks=callbacks, verbose=2)
+
     model.save(MODEL_OUT)
     print('[train] 已保存 %s (%d bytes)' % (MODEL_OUT, os.path.getsize(MODEL_OUT)))
 
+    if len(vx):
+        report(vx, vy, model)
     if not args.no_plot:
-        show_cnn_result(model, x, y)
+        plot_history(history)
 
 
 if __name__ == '__main__':
