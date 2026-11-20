@@ -18,8 +18,15 @@ Keras 3 读它自己的 .keras 文件时会报
 所以这里用 cnn_model.build_model() 新建同构网络，再逐层 set_weights。
 """
 
-import argparse
 import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import logging
+
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+
+import argparse
 import sys
 
 import numpy as np

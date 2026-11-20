@@ -1,4 +1,13 @@
+import logging
 import os
+
+# TensorFlow 的启动噪音（"GPU support is not available"、oneDNN/AVX 编译提示）
+# 都是无害的，而且必须在 import keras / tensorflow 之前生效：
+#   TF_CPP_MIN_LOG_LEVEL=2        屏蔽 C++ 侧的 INFO / WARNING，保留 ERROR
+#   logging ... setLevel(ERROR)   屏蔽 Python 侧的 Warning（GPU 那条就是它）
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -43,7 +52,7 @@ def get_cnn_board(model, rows=ROWS, cols=COLS, region=BG_REGION):
         sq_board += board[i]
     sq_board = np.array(sq_board) / 255.
 
-    sq_pred = np.argmax(model.predict(sq_board), axis=1)  # 获取cnn的预测值
+    sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)  # 直接调用比 model.predict 快一倍多
     sq_pred = np.array([net_decoder[i] for i in sq_pred])  # 解码cnn的预测值
     sq_pred = sq_pred.reshape((rows, cols))
     return sq_pred
@@ -101,8 +110,8 @@ def record_board(model, path=PATH):
             crop = np.array(crop)
             sq_board.append(crop)
         crops.append(crops_r)
-    sq_board = np.array(sq_board)
-    sq_pred = np.argmax(model.predict(sq_board), axis=1)
+    sq_board = np.array(sq_board) / 255.  # 与推理端一致：模型吃 0~1，原版漏了这一步，存档会存进错误类别
+    sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)
     sq_pred = np.array([net_decoder[i] for i in sq_pred])
     sq_pred = sq_pred.reshape((ROWS, COLS))
     for _cls in net_encoder:  # 首次记录时类别子目录可能还不存在，先建好

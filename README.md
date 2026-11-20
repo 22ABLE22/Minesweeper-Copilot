@@ -42,7 +42,7 @@ pip install -r requirements.txt
 
 浏览器访问 <https://www.minesweeper.cn/>（旧 README 里的 `www.saolei.org.cn` 已经打不开了）。
 
-- 用「自定义」把行列数设成和 `config.py` 里的 `ROWS` / `COLS` 一致；仓库默认是 **25 行 × 53 列**，对应一个铺满屏幕的自定义棋盘。
+- 用「自定义」把行列数设成和 `config.py` 里的 `ROWS` / `COLS` 一致。仓库里提交的那组数是原作者机器上的标定结果，在你机器上**一定要自己标定**。
 - 想玩标准难度就改成 `ROWS = 16`、`COLS = 30`，然后重新标定区域。
 - 开局先随便点一格把棋盘打开，剩下的交给程序。
 

@@ -13,6 +13,14 @@
 预测类别分别存到 dir/<类别>/ 下；确认无误后把文件挪进 imgs/<类别>/。
 """
 
+import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import logging
+
+logging.getLogger('tensorflow').setLevel(logging.ERROR)
+
 import argparse
 import glob
 import os
