@@ -224,62 +224,24 @@ def click_cell(r, c, right=False, duration=0.01, interval=0.01):
     pyautogui.sleep(interval)
 
 
-def find_auto_flag_clicks(board, to_flag):
-    """自动标雷模式下，用「点数字格」代替「逐个右键插旗」。
-
-    游戏里打开「自动标雷」后，左键点一个已翻开的数字格，若它周围未翻开的
-    格子数量正好等于该数字，游戏会把这些格子直接标成旗。于是点一次数字格
-    就能插好若干面旗，省掉逐个右键的点击与等待。
-
-    只挑「未翻开格恰好等于数字、且这些格子全在本次推理认定的雷集合里」的数字格，
-    保证点到它时游戏插的是旗、而不是把没标旗的格子挖开。
-    返回 (要点击的数字格集合, 已被覆盖的旗子集合)。
-    """
-    rows, cols = board.shape
-    clicks, handled = set(), set()
-    for r in range(rows):
-        for c in range(cols):
-            n = board[r][c]
-            if n <= 0:
-                continue
-            unknown = set()
-            for rr in (r - 1, r, r + 1):
-                for cc in (c - 1, c, c + 1):
-                    if (rr, cc) == (r, c) or not (0 <= rr < rows and 0 <= cc < cols):
-                        continue
-                    if board[rr][cc] == -2:
-                        unknown.add((rr, cc))
-            if unknown and len(unknown) == n and unknown <= to_flag:
-                clicks.add((r, c))
-                handled |= unknown
-    return clicks, handled
-
-
 def game_once(duration=0.01, interval=0.01, auto_flag=False):
     board = get_cnn_board(model)
     to_click, to_flag = deal_board(board)
 
-    num_clicks, handled = set(), set()
-    if auto_flag and to_flag:
-        num_clicks, handled = find_auto_flag_clicks(board, to_flag)
-
     print('click_pos', to_click)
-    print('flag_pos', to_flag, '(自动标雷)' if auto_flag else '')
+    print('flag_pos', to_flag, '(自动标雷：旗由游戏插)' if auto_flag else '')
 
-    # 自动标雷：先点数字格让游戏自己插旗
-    for lc in sorted(num_clicks):
-        click_cell(lc[0], lc[1], duration=duration, interval=interval)
     for lc in sorted(to_click):
         click_cell(lc[0], lc[1], duration=duration, interval=interval)
-    # 数字格覆盖不到的雷（多为子集推理推出的孤立格），仍用右键补齐
-    for lc in sorted(to_flag - handled):
-        if auto_flag:
-            print('  自动标雷覆盖不到，改右键:', lc)
-        click_cell(lc[0], lc[1], right=True, duration=duration, interval=interval)
+    # 自动标雷模式下不发右键：网页的右键是「插旗 / 取消旗」的开关，
+    # 游戏刚替你插好的旗再点一次就会被取消，下一轮又插回来。
+    if not auto_flag:
+        for lc in sorted(to_flag):
+            click_cell(lc[0], lc[1], right=True, duration=duration, interval=interval)
 
     if not to_click and not to_flag:
         print('[deadlock] 没有能确定推理的格子。请手动点开一格（猜），然后按 B 继续，')
-        print('           或按 Z 用自动标雷模式继续。')
+        print('           或按 Z 只点安全格（游戏会自动插旗）。')
         return False
     return True
 
@@ -299,7 +261,7 @@ def on_press(key):
         elif key.char == 'b':
             game_all(auto_flag=False)
 
-        elif key.char == 'z':  # 自动标雷模式：不发右键，点数字格让游戏插旗
+        elif key.char == 'z':  # 自动标雷模式：只左键点安全格，旗由游戏自己插
             game_all(auto_flag=True)
 
         elif key.char == 'r':
