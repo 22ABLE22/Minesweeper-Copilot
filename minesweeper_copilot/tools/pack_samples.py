@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""把 imgs/ 打包成 imgs.tar.gz —— 仓库里只存这个压缩包，不再逐个跟踪 3000 多张 PNG。
+"""把 data/imgs/ 打包成 data/imgs.tar.gz —— 仓库里只存这个压缩包，不再逐个跟踪 3000 多张 PNG。
 
-用法:
-    python pack_samples.py            # 打包 imgs/ -> imgs.tar.gz
-    python pack_samples.py --extract  # 从 imgs.tar.gz 解出 imgs/
-    python pack_samples.py --list     # 只列出包里有哪几类、各多少张
+用法（在仓库根目录执行）:
+    python -m minesweeper_copilot.tools.pack_samples            # 打包
+    python -m minesweeper_copilot.tools.pack_samples --extract  # 解包
+    python -m minesweeper_copilot.tools.pack_samples --list     # 清点
 
 为什么用 tar.gz 而不是 zip：
     PNG 本身已经 deflate 压缩过，再压一遍 zip 反而更大（实测 imgs 的 2054094 字节
@@ -19,15 +19,16 @@ import os
 import sys
 import tarfile
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(BASE_DIR, 'imgs')
-OUT = os.path.join(BASE_DIR, 'imgs.tar.gz')
+# 仓库根目录（本文件在 <根>/minesweeper_copilot/tools/ 下）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SRC = os.path.join(BASE_DIR, 'data', 'imgs')
+OUT = os.path.join(BASE_DIR, 'data', 'imgs.tar.gz')
 
 
 def collect():
-    """按路径排序收集 imgs/ 下所有 PNG，保证打包顺序稳定。"""
+    """按路径排序收集 data/imgs/ 下所有 PNG，保证打包顺序稳定。"""
     if not os.path.isdir(SRC):
-        sys.exit('没有目录: %s（先跑 python pack_samples.py --extract）' % SRC)
+        sys.exit('没有目录: %s（先跑 python -m minesweeper_copilot.tools.pack_samples --extract）' % SRC)
     files = []
     for root, dirs, fs in os.walk(SRC):
         dirs.sort()
@@ -36,7 +37,7 @@ def collect():
                 files.append(os.path.join(root, f))
     files.sort()
     if not files:
-        sys.exit('imgs/ 里没有 PNG')
+        sys.exit('data/imgs/ 里没有 PNG')
     return files
 
 
@@ -78,9 +79,10 @@ def list_pack():
         for m in tf.getmembers():
             if not m.isfile() or not m.name.lower().endswith('.png'):
                 continue
+            # 归档里的路径是 data/imgs/<类别>/<文件>.png
             parts = m.name.split('/')
-            if len(parts) >= 3:
-                counts[parts[1]] = counts.get(parts[1], 0) + 1
+            if len(parts) >= 4:
+                counts[parts[2]] = counts.get(parts[2], 0) + 1
     for cls in sorted(counts, key=lambda s: (len(s), s)):
         print('%-3s %4d 张' % (cls, counts[cls]))
     print('合计 %d 张' % sum(counts.values()))

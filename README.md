@@ -8,42 +8,61 @@
 
 棋盘推理的核心函数 `deal_board()`（基础规则、消旗、子集推理、交叉集推理四步）来自 [hyper-zlc/mine-sweeping](https://github.com/hyper-zlc/mine-sweeping)，原项目的这份实现是本仓库的起点。
 
-除此之外的代码均为本仓库重写或新增：识别链路的模型结构与训练流程、点击前的颜色复核与概率复核、概率求解器 `minesolver.py`、标定与样本采集工具（`calibrate.py`、`collect.py`、`renumber.py`、`pack_samples.py`）、红雷识别与自动标雷模式等。`deal_board()` 本身一行未改，位置见 `saolei.py` 中 `def deal_board`。
+除此之外的代码均为本仓库重写或新增：识别链路的模型结构与训练流程、点击前的颜色复核与概率复核、概率求解器、标定与样本采集工具、红雷识别与自动标雷模式等。`deal_board()` 本身一行未改，位置见 `minesweeper_copilot/autoplay.py` 中的 `def deal_board`。
 
 ## 目录结构
 
-| 文件 | 作用 |
+```
+Minesweeper-Copilot/
+├── minesweeper_copilot/        # 程序包
+│   ├── __main__.py             # python -m minesweeper_copilot 的入口
+│   ├── autoplay.py             # 主程序：截图 → 识别 → 推理 → 复核 → 点击
+│   ├── config.py               # 唯一的参数入口
+│   ├── net.py                  # CNN 结构，只服务训练
+│   ├── solver.py               # 概率求解器，只给建议不点击
+│   └── tools/                  # 命令行工具
+│       ├── calibrate.py        # 标定棋盘区域，写回 config.py
+│       ├── collect.py          # 按数字颜色采集样本
+│       ├── renumber.py         # 样本重新编号
+│       ├── pack_samples.py     # 打包 / 解包 data/imgs.tar.gz
+│       └── train.py            # 训练识别模型
+├── models/
+│   ├── recognize_new.keras         # 训练好的模型，启动时加载
+│   └── recognize_new.classes.json  # 训练时的类别表，用来核对配套
+├── data/
+│   └── imgs.tar.gz             # 全部训练样本的压缩包（仓库只跟踪这一个文件）
+├── requirements.txt
+├── README.md
+└── LICENSE
+```
+
+| 模块 | 作用 |
 | --- | --- |
-| `saolei.py` | 主程序：截图 → 识别 → 推理 → **点击前复核** → 点击，并监听全局按键；加载 `recognize_new.keras`，复核用 `collect.py` 的配色判断与 `minesolver.py` 的概率 |
+| `autoplay.py` | 主程序：截图 → 识别 → 推理 → **点击前复核** → 点击，并监听全局按键；加载 `models/recognize_new.keras`，复核用 `tools/collect.py` 的配色判断与 `solver.py` 的概率 |
 | `config.py` | **唯一的参数入口**：棋盘区域、行列数、雷数、类别表、各目录路径（**换屏幕或窗口必须改**） |
-| `cnn_model.py` | CNN 结构定义，只被 `train_img.py` 用来建网；`saolei.py` 直接加载模型文件，不导入它 |
-| `train_img.py` | 用 `imgs/` 的样本训练（带数据增强），产出 `recognize_new.keras` 与 `recognize_new.classes.json` |
-| `minesolver.py` | 推不动时算出每格中雷概率，只被 `saolei.py` 调用，**只给建议不点击** |
-| `collect.py` | 按数字颜色给格子打标签：既用于采集样本到 `samples/auto/`，`label_by_color` 也被 `saolei.py` 当作颜色复核复用 |
-| `renumber.py` | 人工筛选完样本后，把某个目录下每个类别重新连续编号 |
-| `calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
-| `recognize_new.keras` | 已训练好的识别模型（Keras 3 格式），`saolei.py` 启动时加载 |
-| `recognize_new.classes.json` | 训练时写出的类别表，`saolei.py` 靠它核对模型与 `config.py` 是否配套 |
-| `imgs.tar.gz` | 全部训练样本的压缩包，3027 张，1.7 MB（**仓库只跟踪这一个文件**） |
-| `pack_samples.py` | 把 `imgs/` 打包成 `imgs.tar.gz`，或反过来解包/清点；`train_img.py` 缺样本时调用它的 `extract()` |
-| `imgs/` | 解包后的训练样本，目录名即类别（`-2`、`-1`、`0`–`6`、`9`、`10`）；不入库，训练时自动解包 |
-| `samples/auto/` | `collect.py` 新采的样本（人工筛完并入 `imgs/`，不入库） |
+| `net.py` | CNN 结构定义，只被 `tools/train.py` 用来建网；`autoplay.py` 直接加载模型文件，不导入它 |
+| `solver.py` | 推不动时算出每格中雷概率，只被 `autoplay.py` 调用，**只给建议不点击** |
+| `tools/train.py` | 用 `data/imgs/` 的样本训练（带数据增强），产出 `models/` 下的模型与类别表 |
+| `tools/collect.py` | 按数字颜色给格子打标签：既用于采集样本到 `samples/auto/`，`label_by_color` 也被 `autoplay.py` 当作颜色复核复用 |
+| `tools/renumber.py` | 人工筛选完样本后，把某个目录下每个类别重新连续编号 |
+| `tools/calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
+| `tools/pack_samples.py` | 把 `data/imgs/` 打包成 `data/imgs.tar.gz`，或反过来解包/清点；`tools/train.py` 缺样本时调用它的 `extract()` |
 
-整个仓库只有一条数据主线：
+整个项目只有一条数据主线：
 
 ```
-屏幕 ──calibrate.py──> config.py (BG_REGION / ROWS / COLS)
+屏幕 ──tools/calibrate──> config.py (BG_REGION / ROWS / COLS)
                                  │
-     collect.py / R 键 ──> samples/auto、dir/ ──人工筛选──> imgs/ ──pack_samples.py──> imgs.tar.gz
+  tools/collect / R 键 ──> samples/auto、dir/ ──人工筛选──> data/imgs/ ──tools/pack_samples──> data/imgs.tar.gz
                                                                       │
-                                                              train_img.py（+ cnn_model.py）
+                                                          tools/train（+ net.py）
                                                                       │
-                                                    recognize_new.keras + .classes.json
+                                                    models/recognize_new.keras + .classes.json
                                                                       │
-                                                 saolei.py（+ minesolver.py、config.py）
+                                                  autoplay（+ solver.py、config.py）
 ```
 
-`config.py` 是唯一的参数入口，`cnn_model.py` 只服务训练，`minesolver.py` 只服务运行时的概率提示。
+`config.py` 是唯一的参数入口，`net.py` 只服务训练，`solver.py` 只服务运行时的概率提示。
 
 ## 环境
 
@@ -59,21 +78,23 @@ pip install -r requirements.txt
 
 ## 训练样本为什么是压缩包
 
-3000 多张 PNG 有 2 MB，但它们几乎全是同一种 39×39 的格子图，逐个入库既让克隆变慢，也让每次 `git status` 多出三千行。仓库里只存 `imgs.tar.gz`（1.7 MB，一个 git 对象）：
+3000 多张 PNG 有 2 MB，但它们几乎全是同一种 39×39 的格子图，逐个入库既让克隆变慢，也让每次 `git status` 多出三千行。仓库里只存 `data/imgs.tar.gz`（1.7 MB，一个 git 对象）：
 
-- **只跑识别、不重新训练**：什么都不用做，`saolei.py` 只用 `recognize_new.keras`，不需要样本。
-- **要重新训练**：`python train_img.py` 发现没有 `imgs/` 会自动解包，不用手动操作；也可以显式跑 `python pack_samples.py --extract`。
+- **只跑识别、不重新训练**：什么都不用做，`autoplay` 只用 `models/recognize_new.keras`，不需要样本包。
+- **要重新训练**：`tools/train` 发现没有 `data/imgs/` 会自动解包，不用手动操作；也可以显式跑 `python -m minesweeper_copilot.tools.pack_samples --extract`。
 
-自己往 `imgs/` 里补了新样本后，用 `python pack_samples.py` 重新打包并提交 `imgs.tar.gz`，否则改动的样本不会进仓库（`imgs/` 已在 `.gitignore` 里）。
+自己往 `data/imgs/` 里补了新样本后，用 `python -m minesweeper_copilot.tools.pack_samples` 重新打包并提交 `data/imgs.tar.gz`，否则改动的样本不会进仓库（`data/imgs/` 已在 `.gitignore` 里）。
 
 用 tar.gz 而不是 zip，是因为 PNG 本身已经压过，再 zip 反而变大（实测 deflate zip 2407311 字节 > 原始 2054094 字节）；tar.gz 把三千多个文件之间重复的头部一起压掉，得到 1783781 字节。脚本把时间戳和所有者统一置零，同一批图重复打包得到的文件逐字节相同，不会产生假改动。
 
 ## 快速开始
 
-1. 浏览器打开 <https://www.minesweeper.cn/>，用「自定义」把行列数设成和 `config.py` 一致（仓库默认 30 行 × 64 列）；
+所有命令都在**仓库根目录**执行。
+
+1. 浏览器打开 <https://www.minesweeper.cn/>，用「自定义」把行列数设成和 `config.py` 一致（仓库默认 16 行 × 16 列）；
 2. 标定棋盘区域（见下一节）；
 3. 开局先随便点一格，把棋盘展开；
-4. 运行 `python saolei.py`，把鼠标移到棋盘上，按键操作。
+4. 运行 `python -m minesweeper_copilot`，把鼠标移到棋盘上，按键操作。
 
 ## 一、标定棋盘区域
 
@@ -82,19 +103,19 @@ pip install -r requirements.txt
 交互标定：
 
 ```powershell
-python calibrate.py --rows 30 --cols 64
+python -m minesweeper_copilot.tools.calibrate --rows 16 --cols 16
 ```
 
-会弹出一张全屏截图：先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**，回车后终端打印 `BG_REGION`、校验单格是否接近正方形，并**直接把结果写回 `config.py`**（加 `--no-write` 则只看不改，用 `git checkout config.py` 撤销）。
+会弹出一张全屏截图：先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**，回车后终端打印 `BG_REGION`、校验单格是否接近正方形，并**直接把结果写回 `minesweeper_copilot/config.py`**（加 `--no-write` 则只看不改，用 `git checkout minesweeper_copilot/config.py` 撤销）。
 
-没有图形界面时用 `python calibrate.py --snap`，它把截图存到 `screenshots/calib.png`，用画图量出坐标后手填。
+没有图形界面时用 `--snap`，它把截图存到 `screenshots/calib.png`，用画图量出坐标后手填。
 
 `config.py` 自带自检：行高与列宽相差超过 0.5 px 会打印警告，说明 `BG_REGION` / `ROWS` / `COLS` 有一个填错了。
 
 ## 二、运行
 
 ```powershell
-python saolei.py
+python -m minesweeper_copilot
 ```
 
 把鼠标移到游戏窗口上（不要停在别的窗口，也不要点终端窗口），然后按键：
@@ -115,7 +136,7 @@ python saolei.py
 
 判断"有没有动手"按模式区分：`B` 发右键，推出旗就算动手；`Z` 不发右键，**只推出旗、推不出可点的安全格时，这一轮一次鼠标也不会动**，棋盘不会有任何变化，下一轮必然得到同样的结果。这种情况会打印 `[deadlock] 只推得出 N 个雷…` 并停下，而不是空转。
 
-另外还有一道兜底 `[stuck]`：连续两轮要执行的动作完全相同，说明点了没生效——通常是标定坐标和实际棋盘不符、游戏窗口被挡住、或者本局已经结束。这时同样停下，先跑 `calibrate.py` 重新标定。
+另外还有一道兜底 `[stuck]`：连续两轮要执行的动作完全相同，说明点了没生效——通常是标定坐标和实际棋盘不符、游戏窗口被挡住、或者本局已经结束。这时同样停下，先跑标定重新校准。
 
 ### 点击前的两道复核（防炸雷）
 
@@ -123,18 +144,18 @@ python saolei.py
 
 | 复核 | 做什么 | 什么时候拦下 | 关掉它 |
 | --- | --- | --- | --- |
-| `verify_by_color`（P1） | 用 `collect.label_by_color` 看数字笔画配色，和 CNN 的结论对拍。颜色判据和神经网络毫无关系 | 有格子 CNN 说 4、颜色说是 6 | `config.VERIFY_BY_COLOR = False` |
-| `verify_by_prob`（P0） | 用 `minesolver.solve_prob` 算全盘概率，只放行「在所有一致解里都不是雷」的格子 | 约束自相矛盾、局面太大算不出、推理说是安全但概率不是 0 | `config.VERIFY_BY_PROB = False` |
+| `verify_by_color`（P1） | 用 `label_by_color` 看数字笔画配色，和 CNN 的结论对拍。颜色判据和神经网络毫无关系 | 有格子 CNN 说 4、颜色说是 6 | `config.VERIFY_BY_COLOR = False` |
+| `verify_by_prob`（P0） | 用 `solver.solve_prob` 算全盘概率，只放行「在所有一致解里都不是雷」的格子 | 约束自相矛盾、局面太大算不出、推理说是安全但概率不是 0 | `config.VERIFY_BY_PROB = False` |
 
 被拦下时终端的样子：
 
 ```
 [verify] 颜色复核发现 1 处识别冲突，本轮不点击：
            第  3 行第 57 列：CNN 认成 4，笔画颜色说明是 6
-           已把这 1 格存进 samples/ 当难样本，筛完并入 imgs/ 可重训。
+           已把这 1 格存进 samples/ 当难样本，筛完并入 data/imgs/ 可重训。
 ```
 
-颜色复核发现的冲突格子会顺手存进 `samples/auto/<颜色>`——颜色给的标签是准的，等于白捡一批难样本；人工筛过之后并进 `imgs/` 就能重训。
+颜色复核发现的冲突格子会顺手存进 `samples/auto/<颜色>`——颜色给的标签是准的，等于白捡一批难样本；人工筛过之后并进 `data/imgs/` 就能重训。
 
 P0 依赖 `config.TOTAL_MINES` 这条全局约束，填 0 时它只能按当前棋盘估算，会明显变弱（但不会误伤安全格）。整套复核每轮多花约 0.2 秒。
 
@@ -148,25 +169,25 @@ P0 依赖 `config.TOTAL_MINES` 这条全局约束，填 0 时它只能按当前�
 
 ## 三、模型文件
 
-主程序与训练脚本都按**脚本所在目录**定位 `recognize_new.keras`，从任何工作目录启动都能找到模型。
+`models/` 与 `data/` 都在仓库根目录，包内代码按 `__file__` 往上两级定位它们，从任何工作目录启动都能找到。
 
-训练还会写出 `recognize_new.classes.json`（训练时的类别表）。`saolei.py` 启动时把它和 `config.net_encoder` 逐项比对：只比类数是不够的——删掉一个类又加回另一个，类数相同但下标全部错位，模型会静默给出错误结果。两者不一致、或者文件缺失时，启动会打印一条 `[model]` 提示，此时应先重训。
+训练还会写出 `models/recognize_new.classes.json`（训练时的类别表）。`autoplay` 启动时把它和 `config.net_encoder` 逐项比对：只比类数是不够的——删掉一个类又加回另一个，类数相同但下标全部错位，模型会静默给出错误结果。两者不一致、或者文件缺失时，启动会打印一条 `[model]` 提示，此时应先重训。
 
-模型是 Keras 3 的 `.keras` 格式，训练一次即覆盖仓库里的同名文件，不需要改代码。
+模型是 Keras 3 的 `.keras` 格式，训练一次即覆盖 `models/` 里的同名文件，不需要改代码。
 
 ## 四、训练自己的模型
 
 ```powershell
-python train_img.py                                   # 用 imgs/ 训练（默认）
-python train_img.py --epochs 20 --per-class 300       # 每类增强到 300 张
-python train_img.py --no-augment                      # 不用增强，只训原始样本
+python -m minesweeper_copilot.tools.train                              # 用 data/imgs 训练（默认）
+python -m minesweeper_copilot.tools.train --epochs 20 --per-class 300 # 每类增强到 300 张
+python -m minesweeper_copilot.tools.train --no-augment                 # 不用增强，只训原始样本
 ```
 
 默认会把每类用增强补到 500 张（随机平移 ±3px、缩放 0.88–1.12、亮度/对比度扰动、轻微高斯模糊），
 验证集只取**未增强**的原始图片（每类 15%），所以打印出来的准确率代表真实分布下的水平。
 训练结束会输出混淆矩阵和逐类准确率，低于 95% 的类别会单独列出来——**先看这张表，再拿去实战**。
 
-数据要求：`imgs/<类别>/*.png`，目录名必须是 `config.net_encoder` 的键。`imgs/` 不存在时训练脚本会自动从 `imgs.tar.gz` 解包：
+数据要求：`data/imgs/<类别>/*.png`，目录名必须是 `config.net_encoder` 的键。`data/imgs/` 不存在时训练脚本会自动从 `data/imgs.tar.gz` 解包：
 
 | 目录名 | 含义 |
 | --- | --- |
@@ -180,11 +201,11 @@ python train_img.py --no-augment                      # 不用增强，只训原
 
 ### 采集真实样本（推荐先做这一步）
 
-数字格的颜色就是数字本身（3 红、4 靛蓝、5 暗红、6 青），所以 `collect.py` 直接按颜色给格子打标签，**不经过模型预测**——不会出现「6 被认成 4，于是样本写进 4 的目录」这种把错误标签固化下来的情况。
+数字格的颜色就是数字本身（3 红、4 靛蓝、5 暗红、6 青），所以采集脚本直接按颜色给格子打标签，**不经过模型预测**——不会出现「6 被认成 4，于是样本写进 4 的目录」这种把错误标签固化下来的情况。
 
-采集是**独立脚本**，主程序不再自动调用它——想攒样本时自己在棋盘展开的情况下跑一次。
+采集是**独立脚本**，主程序不会自动调用它——想攒样本时自己在棋盘展开的情况下跑一次。
 
-默认采全部能按颜色区分的类别。范围就是 `collect.py` 顶部的这一行：
+默认采全部能按颜色区分的类别。范围就是 `tools/collect.py` 顶部的这一行：
 
 ```python
 COLLECT_CLASSES = tuple(PALETTE) + (BOOM_LABEL,)   # 1、2、3、4、5、6 加爆炸的红雷 10
@@ -196,14 +217,14 @@ COLLECT_CLASSES = tuple(PALETTE) + (BOOM_LABEL,)   # 1、2、3、4、5、6 加�
 COLLECT_CLASSES = (5, 6, 10)
 ```
 
-`7` 与普通地雷同为纯黑、排色分不开，不在调色板里，永远采不到；空块、未翻开、旗子、普通地雷这些形状类也不按颜色判断，继续用 `imgs/` 里的现成样本。
+`7` 与普通地雷同为纯黑、排色分不开，不在调色板里，永远采不到；空块、未翻开、旗子、普通地雷这些形状类也不按颜色判断，继续用 `data/imgs/` 里的现成样本。
 
 在棋盘展开的情况下运行：
 
 ```powershell
-python collect.py                 # 抓当前屏幕
-python collect.py --sheet         # 顺带输出缩略图拼板，肉眼抽查十秒
-python collect.py --dry-run       # 只统计不存图
+python -m minesweeper_copilot.tools.collect              # 抓当前屏幕
+python -m minesweeper_copilot.tools.collect --sheet      # 顺带输出缩略图拼板，肉眼抽查十秒
+python -m minesweeper_copilot.tools.collect --dry-run    # 只统计不存图
 ```
 
 颜色判不准、太淡、被遮挡的格子会被直接丢弃（宁可少收，也不收错标签）。多打几局、每类攒到 100 张以上就值得重训。
@@ -213,21 +234,21 @@ python collect.py --dry-run       # 只统计不存图
 采集会认错一部分（尤其 3 与 1、5 与 6、以及残格），这是正常的——名字里没有正确答案，颜色只是启发式。做法是：
 
 1. 打开 `samples/auto/`，用资源管理器的**大图标视图**逐类过一遍，把放错的拖到正确目录；
-2. 把筛好的图并入 `imgs/<类别>/`（同名类别直接拖进去即可）；
-3. 跑 `python renumber.py imgs/<类别>` 重新编号，让编号从 `_0001` 连续排下去（编号只求不重名，不代表任何含义）；
-4. `python train_img.py`。
+2. 把筛好的图并入 `data/imgs/<类别>/`（同名类别直接拖进去即可）；
+3. 跑 `python -m minesweeper_copilot.tools.renumber data/imgs/<类别>` 重新编号，让编号从 `_0001` 连续排下去（编号只求不重名，不代表任何含义）；
+4. `python -m minesweeper_copilot.tools.train`。
 
-`renumber.py` 是两阶段改名（先全部改成临时名再改成最终名），不会出现「A 改成 B 时把 B 覆盖掉」。加 `--dry-run` 只打印不改动。
+重新编号是两阶段改名（先全部改成临时名再改成最终名），不会出现「A 改成 B 时把 B 覆盖掉」。加 `--dry-run` 只打印不改动。
 
-`R` 键走的是另一条路：按**模型预测**存进 `dir/<类别>/`，属于伪标签，适合补 `-2`（未翻开）、`-1`（旗子）、`0`（空块）、`9`（地雷）这些形状类；数字类请用 `collect.py`，否则错标的样本会让模型越训越差。
+`R` 键走的是另一条路：按**模型预测**存进 `dir/<类别>/`，属于伪标签，适合补 `-2`（未翻开）、`-1`（旗子）、`0`（空块）、`9`（地雷）这些形状类；数字类请用采集脚本，否则错标的样本会让模型越训越差。
 
 ### 重训的完整流程
 
-1. 新机器或换了窗口：`python calibrate.py --rows 30 --cols 64`，结果自动写进 `config.py`；
-2. 想补样本：棋盘展开后跑 `python collect.py`，人工筛一遍并入 `imgs/`，再跑 `python renumber.py imgs` 重新编号（见上一节）；
-3. `python train_img.py`，看输出里的混淆矩阵，确认每一类都在 96% 以上；
-4. 补过样本的话，跑 `python pack_samples.py` 重新打包，连同 `recognize_new.keras` 一起提交；
-5. 再跑 `python saolei.py` 实战。
+1. 新机器或换了窗口：`python -m minesweeper_copilot.tools.calibrate --rows 16 --cols 16`，结果自动写进 `config.py`；
+2. 想补样本：棋盘展开后跑 `python -m minesweeper_copilot.tools.collect`，人工筛一遍并入 `data/imgs/`，再跑 `python -m minesweeper_copilot.tools.renumber data/imgs` 重新编号（见上一节）；
+3. `python -m minesweeper_copilot.tools.train`，看输出里的混淆矩阵，确认每一类都在 96% 以上；
+4. 补过样本的话，跑 `python -m minesweeper_copilot.tools.pack_samples` 重新打包，连同 `models/recognize_new.keras` 一起提交；
+5. 再跑 `python -m minesweeper_copilot` 实战。
 
 ## 五、常见问题
 
@@ -247,10 +268,13 @@ python collect.py --dry-run       # 只统计不存图
 多半是显示缩放或浏览器缩放不是 100%，格子被压扁后与训练样本不一致。把缩放调回 100%，或重新标定并补样本重训。
 
 **某几个数字（比如 6）总是认错**
-先看 `imgs/6` 有多少张。仓库自带 63 张，够用；如果自己的机器上认错，多半是显示缩放不是 100%（格子被压扁，与样本不一致），先按上一条排查，再考虑补样本重训。补的时候用 `collect.py` 按颜色收，不要用 `R` 键存伪标签。
+先看 `data/imgs/6` 有多少张。仓库自带 63 张，够用；如果自己的机器上认错，多半是显示缩放不是 100%（格子被压扁，与样本不一致），先按上一条排查，再考虑补样本重训。补的时候用采集脚本按颜色收，不要用 `R` 键存伪标签。
 
 **`ModuleNotFoundError`**
 依赖没装全，重跑 `pip install -r requirements.txt`。
+
+**`python minesweeper_copilot/autoplay.py` 报 `attempted relative import`**
+包内模块用的是相对导入，必须从仓库根目录用 `python -m minesweeper_copilot` 启动，不要直接跑文件。
 
 ## 六、算法简述
 
@@ -260,7 +284,7 @@ python collect.py --dry-run       # 只统计不存图
    - `n2 - n1 == |S2 - S1|` → `S2 - S1` 全是雷；
    - `n1 == n2` → `S2 - S1` 全都不是雷。
    交叉集还能再推一层：`|S1| - |S1 ∩ S2| == n1 - n2` → `S1` 独有的全是雷、`S2` 独有的都可点。
-4. **概率提示**：还是推不动时，`minesolver.py` 把每个数字格的「周围未翻开格恰好有 need 颗雷」当成约束，按共享格子拆成连通分量，分量内枚举全部一致解，分量间按全局雷数在对数域卷积，孤立格用组合数加权，归一化得到每格的中雷概率。终端会列出最安全的 3 格。**这一步只算不点**，决定权留给你——猜错这局就结束了。
+4. **概率提示**：还是推不动时，`solver.py` 把每个数字格的「周围未翻开格恰好有 need 颗雷」当成约束，按共享格子拆成连通分量，分量内枚举全部一致解，分量间按全局雷数在对数域卷积，孤立格用组合数加权，归一化得到每格的中雷概率。终端会列出最安全的 3 格。**这一步只算不点**，决定权留给你——猜错这局就结束了。
 5. **点击前复核**：第 2、3 步给出的结论先不执行，用上面两道独立检查再确认一遍——颜色复核（与 CNN 完全无关的第二条识别路径）查识别错，概率复核（全盘一致解）查推理错。任何一条报出问题，这一轮一格都不点。
 6. **执行**：把 (行, 列) 换算成屏幕坐标 `(x + (c - 0.5) * cols_size, y + (r - 0.5) * row_size)`，左键点开；`B` 模式再逐个右键插旗，`Z` 模式不发右键、交给游戏自动插旗；没有可操作格子时打印概率提示并停下，等你猜一步后再继续。
 

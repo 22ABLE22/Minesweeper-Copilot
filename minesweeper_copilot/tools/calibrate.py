@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""标定棋盘几何，并直接写回 config.py。
+"""标定棋盘几何，并直接写回包内的 config.py。
 
-config.py 是整个仓库唯一的参数入口，本脚本只改其中的 BG_REGION / ROWS / COLS
-三行，其余内容原样保留。saolei.py 与 collect.py 都按这三行切格子，
+config.py 是整个项目唯一的参数入口，本脚本只改其中的 BG_REGION / ROWS / COLS
+三行，其余内容原样保留。autoplay 与 tools.collect 都按这三行切格子，
 所以标定错了它们会一起错。
 
-用法:
-    python calibrate.py --rows 30 --cols 64     # 点两下，自动改写 config.py
-    python calibrate.py --rows 30 --cols 64 --no-write   # 只看结果，不改文件
-    python calibrate.py --snap                  # 只存截图，自己用画图量坐标
+用法（在仓库根目录执行）:
+    python -m minesweeper_copilot.tools.calibrate --rows 30 --cols 64
+    python -m minesweeper_copilot.tools.calibrate --rows 30 --cols 64 --no-write
+    python -m minesweeper_copilot.tools.calibrate --snap   # 只存截图，自己量坐标
 
 点击顺序: 先点棋盘「最左上一格的左上角」，再点「最右下一格的右下角」。
 点击过程中不要移动/缩放游戏窗口，也不要切走页面。
@@ -21,7 +21,9 @@ import re
 import numpy as np
 import pyautogui
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.py')
+# 本文件在 <根>/minesweeper_copilot/tools/ 下，config.py 在它的上一级
+CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.py')
 
 
 def snap(out_dir='screenshots'):
@@ -113,7 +115,7 @@ def main():
         print('[calib] --no-write：没有修改 config.py')
         return
     write_config((x1, y1, w, h), args.rows, args.cols)
-    print('[calib] 完成。如需撤销，用 git checkout config.py')
+    print('[calib] 完成。如需撤销，用 git checkout minesweeper_copilot/config.py')
 
 
 if __name__ == '__main__':

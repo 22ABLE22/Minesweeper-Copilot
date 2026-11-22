@@ -2,8 +2,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# 训练样本：仓库只存 imgs.tar.gz，运行 train_img.py 时会自动解出 imgs/
-imgs/
+# 训练样本：仓库只存 data/imgs.tar.gz，训练时会自动解出 data/imgs/
+data/imgs/
 
 # 运行产物（都会自动重建，不入库）
 dir/

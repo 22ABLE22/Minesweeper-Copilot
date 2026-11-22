@@ -7,16 +7,16 @@
 
 采集范围由 COLLECT_CLASSES 决定，默认是全部能靠颜色区分的数字
 （1、2、3、4、5、6）加上爆炸的红雷 10。空块、未翻开、旗子、普通地雷这些
-形状类不靠颜色判断，继续用 imgs/ 里的样本，这里不会采到。
+形状类不靠颜色判断，继续用 data/imgs/ 里的样本，这里不会采到。
 
 产出写进 config.SAMPLES_PATH（samples/auto/）。它不是训练脚本，主程序也不调用它：
-采完要人工筛一遍、并入 imgs/、必要时跑 renumber.py，再跑 train_img.py。
-格子几何（BG_REGION / ROWS / COLS）全部取自 config.py，与 saolei.py 完全一致。
+采完要人工筛一遍、并入 data/imgs/、必要时跑 tools.renumber，再跑 tools.train。
+格子几何（BG_REGION / ROWS / COLS）全部取自 config.py，与 autoplay.py 完全一致。
 
-用法:
-    python collect.py                       # 抓一次当前屏幕
-    python collect.py --from-file board.png # 用已有截图（整块棋盘区域）
-    python collect.py --sheet               # 顺便输出一张缩略图拼板供肉眼抽查
+用法（在仓库根目录执行）:
+    python -m minesweeper_copilot.tools.collect                 # 抓一次当前屏幕
+    python -m minesweeper_copilot.tools.collect --sheet         # 顺带输出缩略图拼板
+    python -m minesweeper_copilot.tools.collect --from-file board.png  # 用已有截图
 """
 
 import argparse
@@ -27,7 +27,7 @@ from time import time
 import numpy as np
 from PIL import Image
 
-from config import BG_REGION, COLS, ROWS, SAMPLES_PATH, cols_size, row_size
+from ..config import BG_REGION, COLS, ROWS, SAMPLES_PATH, cols_size, row_size
 
 # 经典扫雷的数字配色
 PALETTE = {

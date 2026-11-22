@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """扫雷 CNN 结构（Keras 3）。
 
-只有训练脚本 train_img.py 导入本文件来建网；推理脚本 saolei.py 不导入它，
-而是直接加载训练好的 recognize_new.keras。所以改了层结构就必须重训，
+只有训练脚本 tools/train.py 导入本模块来建网；主程序 autoplay.py 不导入它，
+而是直接加载训练好的 models/recognize_new.keras。所以改了层结构就必须重训，
 旧权重对不上新结构。
 
 输入：32x32x3，RGB，取值 0~1
@@ -12,7 +12,7 @@
 import keras
 from keras import layers
 
-from config import net_encoder
+from .config import net_encoder
 
 INPUT_SHAPE = (32, 32, 3)
 NUM_CLASSES = len(net_encoder)

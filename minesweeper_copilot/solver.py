@@ -3,8 +3,8 @@
 
 给你「现在点哪一格最安全」用。它只算概率、不做决定，程序不会拿它自动点击。
 
-唯一调用方是 saolei.py 的 print_safety_hint()：推理推不动（死局）时打印
-最安全的 3 格，然后停下等你手动点。棋盘状态由 saolei.py 的 CNN 识别给出，
+唯一调用方是 autoplay.py 的 print_safety_hint()：推理推不动（死局）时打印
+最安全的 3 格，然后停下等你手动点。棋盘状态由 autoplay.py 的 CNN 识别给出，
 所以识别错了这里算出的概率也不可信——hint() 的 info['contradictions'] 就是提示。
 
 思路
@@ -21,13 +21,14 @@
 - 需要知道整盘雷数。用 config.TOTAL_MINES 填写；填 0 时按当前棋盘估算。
 - 棋盘识别有误（比如 6 被认成 4）时，约束之间会互相矛盾。这种情况
   solve_prob 仍然会给数，但结论不可信——hint() 返回的 info['contradictions']
-  就是判断依据，saolei.py 会在打印提示前先说一句「有 N 条约束互相矛盾」。
+  就是判断依据，autoplay.py 会在打印提示前先说一句「有 N 条约束互相矛盾」。
 - 单个分量解数超过 CAP_SOLS 时放弃（返回 None），不会给出错的概率。
 """
 import math
 
 import numpy as np
-from config import TOTAL_MINES
+
+from .config import TOTAL_MINES
 
 UNK, FLAG = -2, -1
 

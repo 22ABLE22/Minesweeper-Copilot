@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """把样本目录按类别重新编号为 <类别>_<序号>.png。
 
-整理样本的最后一步：collect.py 采到 samples/auto/、人工筛选并入 imgs/ 之后，
+整理样本的最后一步：tools/collect 采到 samples/auto/、人工筛选并入 data/imgs/ 之后，
 用本脚本让编号从 _0001 连续排下去。编号只求不重名，不代表任何含义，
-train_img.py 也不读它。
+tools/train.py 也不读它。
 
-用法：
-    python renumber.py                     # 处理 samples/auto
-    python renumber.py imgs/6              # 只处理一个类别目录
-    python renumber.py imgs                # 处理 imgs 下所有类别
-    python renumber.py imgs --dry-run      # 只打印不改动
+用法（在仓库根目录执行，路径相对仓库根）:
+    python -m minesweeper_copilot.tools.renumber                # 处理 samples/auto
+    python -m minesweeper_copilot.tools.renumber data/imgs/6    # 只处理一个类别目录
+    python -m minesweeper_copilot.tools.renumber data/imgs      # 处理所有类别
+    python -m minesweeper_copilot.tools.renumber data/imgs --dry-run
 
 分两阶段：先把所有文件改成 __tmp__ 前缀，再改到最终名，
 避免新旧名字撞车（例如 3_0001.png 已存在时被覆盖）。
@@ -17,7 +17,8 @@ train_img.py 也不读它。
 import os
 import sys
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 仓库根目录（本文件在 <根>/minesweeper_copilot/tools/ 下）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DRY = '--dry-run' in sys.argv
 ARGS = [a for a in sys.argv[1:] if not a.startswith('-')]
 
@@ -37,7 +38,7 @@ def main():
     if not os.path.isdir(ROOT):
         sys.exit('没有目录: %s' % ROOT)
     total = 0
-    # 传的目录本身就是类别目录（如 imgs/6）时，直接按它自己的名字当类别
+    # 传的目录本身就是类别目录（如 data/imgs/6）时，直接按它自己的名字当类别
     self_class = os.path.basename(os.path.normpath(ROOT))
     has_subdir = any(os.path.isdir(os.path.join(ROOT, e)) for e in os.listdir(ROOT))
     if has_subdir:

@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
 """训练扫雷识别用的 CNN。
 
-用法:
-    python train_img.py                          # 用 imgs/ 训练
-    python train_img.py --epochs 20 --per-class 300
-    python train_img.py --no-augment             # 不用增强，只训原始样本
+用法（在仓库根目录执行）:
+    python -m minesweeper_copilot.tools.train                 # 用 data/imgs 训练
+    python -m minesweeper_copilot.tools.train --epochs 20 --per-class 300
+    python -m minesweeper_copilot.tools.train --no-augment    # 只训原始样本
 
 数据来源:
-    imgs/  全部训练样本（按类别分文件夹，文件夹名是 net_encoder 的键）
-    仓库里只跟踪 imgs.tar.gz；imgs/ 不存在时会自动解包（等价于
-    python pack_samples.py --extract），解出来的 imgs/ 不入库。
-    collect.py 采到的新样本写在 samples/auto/（config.SAMPLES_PATH），
-    人工筛完并入 imgs/ 再重训；本脚本只读 imgs/，不碰 samples/。
+    data/imgs/  全部训练样本（按类别分文件夹，文件夹名是 net_encoder 的键）
+    仓库里只跟踪 data/imgs.tar.gz；data/imgs/ 不存在时会自动解包（等价于
+    python -m minesweeper_copilot.tools.pack_samples --extract），解出来的 data/imgs/ 不入库。
+    tools/collect 采到的新样本写在 samples/auto/（config.SAMPLES_PATH），
+    人工筛完并入 data/imgs/ 再重训；本脚本只读 data/imgs/，不碰 samples/。
 
 训练集用数据增强（平移、缩放、亮度、对比度、轻微模糊）把每类补到 --per-class 张，
 验证集只用未增强的原始图片，保证报告的是真实分布下的准确率。
-产出: 仓库根目录的 recognize_new.keras（Keras 3 格式），saolei.py 直接加载。
+产出: models/recognize_new.keras（Keras 3 格式），autoplay 直接加载。
 """
 
 import os
@@ -34,17 +34,18 @@ import random
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
 
-from cnn_model import INPUT_SHAPE, NUM_CLASSES, build_model
-from config import TRAIN_PATH, net_decoder, net_encoder
-from pack_samples import OUT as SAMPLES_TAR, extract as extract_samples
+from ..config import TRAIN_PATH, net_decoder, net_encoder
+from ..net import INPUT_SHAPE, NUM_CLASSES, build_model
+from .pack_samples import OUT as SAMPLES_TAR, extract as extract_samples
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_OUT = os.path.join(BASE_DIR, 'recognize_new.keras')
-MODEL_CLASSES = os.path.join(BASE_DIR, 'recognize_new.classes.json')
+# 仓库根目录（本文件在 <根>/minesweeper_copilot/tools/ 下）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MODEL_OUT = os.path.join(BASE_DIR, 'models', 'recognize_new.keras')
+MODEL_CLASSES = os.path.join(BASE_DIR, 'models', 'recognize_new.classes.json')
 
 
 def ensure_samples():
-    """imgs/ 不存在但仓库带着 imgs.tar.gz 时，先自动解包再训练。"""
+    """data/imgs/ 不存在但仓库带着 data/imgs.tar.gz 时，先自动解包再训练。"""
     if os.path.isdir(TRAIN_PATH):
         return
     if not os.path.isfile(SAMPLES_TAR):
@@ -181,7 +182,7 @@ def plot_history(history):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--sources', default=None, help='逗号分隔的数据目录，默认只用 imgs')
+    ap.add_argument('--sources', default=None, help='逗号分隔的数据目录，默认只用 data/imgs')
     ap.add_argument('--per-class', type=int, default=500, help='训练集每类目标张数（增强补足）')
     ap.add_argument('--val-split', type=float, default=0.15, help='验证集比例（只用原始图片）')
     ap.add_argument('--epochs', type=int, default=12)
@@ -205,8 +206,8 @@ def main():
 
     pools = scan_sources(sources)
     if not pools:
-        raise SystemExit('[train] 没有找到训练图片。仓库自带 imgs.tar.gz，'
-                         '跑 python pack_samples.py --extract 解包后再试')
+        raise SystemExit('[train] 没有找到训练图片。仓库自带 data/imgs.tar.gz，'
+                         '跑 python -m minesweeper_copilot.tools.pack_samples --extract 解包后再试')
 
     use_aug = not args.no_augment
     x, y, vx, vy = build_sets(pools, args.per_class, args.val_split, use_aug)

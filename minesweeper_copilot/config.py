@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-"""游戏配置参数，也是整个仓库唯一的参数入口。
+"""游戏配置参数，也是整个项目唯一的参数入口。
 
-其他脚本（saolei.py、collect.py、train_img.py、minesolver.py）都从这里读，
+包内其他模块（autoplay、net、solver、tools/*）都从这里读，
 改参数只改这个文件，不要去改各脚本里的常量。
 
 注意：下面所有数值都和「你的屏幕 + 浏览器窗口位置 + 页面缩放比例」强绑定。
-换机器、移动/缩放窗口、改浏览器缩放之后，必须重新标定（见 calibrate.py 与 README）。
+换机器、移动/缩放窗口、改浏览器缩放之后，必须重新标定
+（`python -m minesweeper_copilot.tools.calibrate`，见 README）。
 """
 
 import os
@@ -15,13 +16,13 @@ import os
 #   x, y : 棋盘左上角在屏幕上的坐标（要贴着第一格的左上角，不要把窗口边框算进去）
 #   w, h : 棋盘整体的宽、高（只算棋盘，不含标题栏、工具栏、状态栏）
 # 如果习惯用 (x1, y1, x2, y2) 表示，就写成 (x1, y1, x2 - x1, y2 - y1)
-BG_REGION = (18, 176, 2504, 1175)
+BG_REGION = (831, 405, 876, 876)
 
 # 棋盘行数、列数（必须和游戏里设置的完全一致，否则格子会被切错）
-ROWS = 30
-COLS = 64
+ROWS = 16
+COLS = 16
 
-# 整盘雷数。只给 minesolver.py 算概率用：推不动时它会算出「点哪一格最安全」。
+# 整盘雷数。只给 solver.py 算概率用：推不动时它会算出「点哪一格最安全」。
 # 填你开局时设置的雷数；填 0 表示不知道，程序按当前已翻开的数字估算（会不准）。
 TOTAL_MINES = 0
 
@@ -47,25 +48,26 @@ net_decoder = {v: k for k, v in net_encoder.items()}
 # ------------------------------------------------------------------ 防炸雷复核
 # 点击前的两道独立复核。原则是「宁可停下等你手动点，也不点错一格」。
 #
-# P1 颜色复核：用 collect.label_by_color 的数字笔画配色独立复核 CNN。
+# P1 颜色复核：用 minesweeper_copilot/tools/collect.py 的数字笔画配色独立复核 CNN。
 #   颜色判据和神经网络完全无关，CNN 说某格是 4、颜色说是 6 时直接停住。
 #   认错数字是踩雷的唯一来源（推理本身不会点雷），所以这条最划算。
 VERIFY_BY_COLOR = True
 
-# P0 概率复核：点击前用 minesolver 算全盘概率，只有概率严格为 0 的格子才点。
+# P0 概率复核：点击前用 solver.py 算全盘概率，只有概率严格为 0 的格子才点。
 #   它靠「整盘雷数」这条全局约束发现识别错误，所以 TOTAL_MINES 要填对；
 #   填 0 时只能按当前棋盘估算，这道复核会明显变弱（但不会误伤安全格）。
 VERIFY_BY_PROB = True
 
 # ------------------------------------------------------------------ 路径
-# 全部基于本文件所在目录推导，脚本从任何工作目录启动都可以
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 全部基于仓库根目录（本文件在 <仓库根>/minesweeper_copilot/ 下）推导，
+# 从任何工作目录启动都能找到这些目录。
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 训练集：每个类别一个子文件夹，文件夹名就是 net_encoder 的键（-2、-1、0..9）
-TRAIN_PATH = os.path.join(BASE_DIR, 'imgs')
+TRAIN_PATH = os.path.join(BASE_DIR, 'data', 'imgs')
 
-# collect.py 采集新样本的目录（按数字颜色打标签，见 README）。
-# 筛完并入 imgs/ 后再重训；samples/ 不入库。
+# tools.collect 采集新样本的目录（按数字颜色打标签，见 README）。
+# 筛完并入 data/imgs 后再重训；samples/ 不入库。
 SAMPLES_PATH = os.path.join(BASE_DIR, 'samples', 'auto')
 
 # 按 R 键记录新样本的目录（同样按类别分子文件夹）

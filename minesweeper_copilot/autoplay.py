@@ -18,28 +18,31 @@ from PIL import Image
 from keras.models import load_model
 from multiprocess import Pool
 from pynput.keyboard import KeyCode, Listener
-
-# P1 颜色复核用：label_by_color 只按笔画颜色判数字，与 CNN 完全是两条独立路径
-from collect import PALETTE as DIGIT_COLORS, label_by_color, next_index
-from config import *
-from minesolver import build_constraints, hint as mine_hint, solve_prob as mine_prob
 from time import time
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, 'recognize_new.keras')
+from .config import *  # noqa: F401,F403  —— 全项目唯一的参数入口
+from .solver import build_constraints, hint as mine_hint, solve_prob as mine_prob
+# P1 颜色复核用：label_by_color 只按笔画颜色判数字，与 CNN 完全是两条独立路径
+from .tools.collect import PALETTE as DIGIT_COLORS, label_by_color, next_index
+
+# 仓库根目录（本文件在 <根>/minesweeper_copilot/ 下）
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(ROOT_DIR, 'models', 'recognize_new.keras')
 
 # 爆炸的红雷：踩中的那颗雷在界面上是红底的，出现它说明本局已经结束
 BOOM_CLASS = 10
 
-model = load_model(MODEL_PATH)  # 已训练的CNN（Keras 3 的 .keras 格式）
+# 已训练的 CNN（Keras 3 的 .keras 格式）。由 main() 载入，不放模块顶层，
+# 这样单独 import 本模块时不会顺带拉起 TensorFlow。
+model = None
 
 # 模型必须与 config 的类别表配套。只比类数不够：删掉一个类又加回另一个，
-# 类数相同但下标全错位，模型会静默地给出错误结果。train_img.py 会把训练时的
+# 类数相同但下标全错位，模型会静默地给出错误结果。tools/train.py 会把训练时的
 # 类别表写成同名的 .classes.json，这里逐项比对。
-MODEL_CLASSES_PATH = os.path.join(BASE_DIR, 'recognize_new.classes.json')
+MODEL_CLASSES_PATH = os.path.join(ROOT_DIR, 'models', 'recognize_new.classes.json')
 
 
-def check_model_classes():
+def check_model_classes(model):
     """模型类别表与 config 不一致时返回一句提示，一致或无从判断时返回 None。"""
     if int(model.layers[-1].units) != len(net_encoder):
         return ('当前模型输出 %d 类，config 里有 %d 类' % (
@@ -56,11 +59,6 @@ def check_model_classes():
     if trained != net_encoder:
         return ('模型的类别表与 config 不一致，模型训练时的类别表是 %s' % trained)
     return None
-
-
-_mismatch = check_model_classes()
-if _mismatch:
-    print('[model] %s；请用 train_img.py 重训后再运行' % _mismatch)
 
 
 # 获取截图：按 config 的几何抓一次屏，切成原分辨率的格子。
@@ -400,7 +398,7 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
             if len(conflicts) > 6:
                 print('           ……另有 %d 处' % (len(conflicts) - 6))
             if saved:
-                print('           已把这 %d 格存进 samples/ 当难样本，筛完并入 imgs/ 可重训。' % saved)
+                print('           已把这 %d 格存进 samples/ 当难样本，筛完并入 data/imgs/ 可重训。' % saved)
             print('           请手动确认这几格，或检查标定 / 窗口是否被遮挡，然后按 B 继续。')
             return False
 
@@ -460,7 +458,8 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
     if repeated:
         print('[stuck] 连续两轮要执行的动作完全相同 %d 个，点了没有产生任何变化。' % actions)
         print('        常见原因：标定坐标与实际棋盘不符、游戏窗口被别的窗口挡住、本局已经结束。')
-        print('        请先跑 calibrate.py 重新标定，或手动点开一格后按 B 继续。')
+        print('        请先跑 python -m minesweeper_copilot.tools.calibrate 重新标定，'
+              '或手动点开一格后按 B 继续。')
         return False
     return True
 
@@ -508,14 +507,29 @@ def start_listen():
         listener.join()
 
 
-if __name__ == '__main__':
-    print('开始监听,按 A 键截图并执行脚本一次,\n'
-          '按 B 键截图并执行脚本直到无法推理,\n'
-          '按 Z 键同上，但用「自动标雷」模式（需先在游戏里打开该选项）,\n'
-          '按 C 键截图并显示截图结果,\n'
-          '按 S 键截图并显示预测结果,\n'
-          '按 R 键截图并保存截图到文件夹,\n'
-          '按 Q 键退出,\n'
-          '注：1.如果鼠标失去控制，快速移动鼠标，将鼠标移出屏幕左上角会强制退出程序\n'
-          '2.显示截图结果和预测结果与主线程冲突，需要开启新进程，响应会比较慢')
+KEY_HELP = (
+    '开始监听,按 A 键截图并执行脚本一次,\n'
+    '按 B 键截图并执行脚本直到无法推理,\n'
+    '按 Z 键同上，但用「自动标雷」模式（需先在游戏里打开该选项）,\n'
+    '按 C 键截图并显示截图结果,\n'
+    '按 S 键截图并显示预测结果,\n'
+    '按 R 键截图并保存截图到文件夹,\n'
+    '按 Q 键退出,\n'
+    '注：1.如果鼠标失去控制，快速移动鼠标，将鼠标移出屏幕左上角会强制退出程序\n'
+    '2.显示截图结果和预测结果与主线程冲突，需要开启新进程，响应会比较慢'
+)
+
+
+def main():
+    """加载模型、核对类别表、打印按键说明，然后进入按键监听。"""
+    global model
+    model = load_model(MODEL_PATH)
+    mismatch = check_model_classes(model)
+    if mismatch:
+        print('[model] %s；请用 python -m minesweeper_copilot.tools.train 重训后再运行' % mismatch)
+    print(KEY_HELP)
     start_listen()
+
+
+if __name__ == '__main__':
+    main()
