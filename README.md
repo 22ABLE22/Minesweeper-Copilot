@@ -21,7 +21,7 @@ Minesweeper-Copilot/
 │   ├── net.py                  # CNN 结构，只服务训练
 │   ├── solver.py               # 概率求解器，只给建议不点击
 │   └── tools/                  # 命令行工具
-│       ├── calibrate.py        # 标定棋盘区域，写回 config.py
+│       ├── calibrate.py        # 标定棋盘区域：点两角→自动算行列→预览确认
 │       ├── collect.py          # 按数字颜色采集样本
 │       ├── renumber.py         # 样本重新编号
 │       ├── pack_samples.py     # 打包 / 解包 data/imgs.tar.gz
@@ -45,7 +45,7 @@ Minesweeper-Copilot/
 | `tools/train.py` | 用 `data/imgs/` 的样本训练（带数据增强），产出 `models/` 下的模型与类别表 |
 | `tools/collect.py` | 按数字颜色给格子打标签：既用于采集样本到 `samples/auto/`，`label_by_color` 也被 `autoplay.py` 当作颜色复核复用 |
 | `tools/renumber.py` | 人工筛选完样本后，把某个目录下每个类别重新连续编号 |
-| `tools/calibrate.py` | 交互式标定棋盘区域，点两下直接把结果写回 `config.py` |
+| `tools/calibrate.py` | 交互式标定棋盘区域：点两角圈出范围，自相关自动推算行列数，画网格预览给人确认，最后写回 `config.py` |
 | `tools/pack_samples.py` | 把 `data/imgs/` 打包成 `data/imgs.tar.gz`，或反过来解包/清点；`tools/train.py` 缺样本时调用它的 `extract()` |
 
 整个项目只有一条数据主线：
@@ -103,12 +103,28 @@ pip install -r requirements.txt
 交互标定：
 
 ```powershell
-python -m minesweeper_copilot.tools.calibrate --rows 16 --cols 16
+python -m minesweeper_copilot.tools.calibrate
 ```
 
-会弹出一张全屏截图：先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**，回车后终端打印 `BG_REGION`、校验单格是否接近正方形，并**直接把结果写回 `minesweeper_copilot/config.py`**（加 `--no-write` 则只看不改，用 `git checkout minesweeper_copilot/config.py` 撤销）。
+四步：
 
-没有图形界面时用 `--snap`，它把截图存到 `screenshots/calib.png`，用画图量出坐标后手填。
+1. 弹出一张全屏截图，先左键点棋盘**最左上那一格的左上角**，再点**最右下那一格的右下角**。这两点围出的矩形就是 `BG_REGION`。
+2. 程序在这个矩形里用**自相关**找出格子周期，自动推算行数和列数——不用自己数。
+3. 把推出来的网格**画在截图上再弹一次**：网格线正好压在格子边界上就回车确认；明显错位就按提示输入真实行列数（例如 `30 64`），网格会立刻重画一份；两点点歪了输 `r` 重新取点。
+4. 确认后把 `BG_REGION` / `ROWS` / `COLS` 三行**直接写回 `minesweeper_copilot/config.py`**。
+
+自动推算失败时会直接让你输行列数，不会瞎猜——它在前面的检测里加了三道校验：格子必须接近正方形、推算出的周期必须和"边长 ÷ 格数"一致、自相关的峰值必须够显著。
+
+常用参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--no-preview` | 不弹网格预览，直接采信自动推算的结果 |
+| `--rows 30 --cols 64` | 跳过自动推算，用指定的行列数画预览、确认 |
+| `--no-write` | 只打印，不修改 `config.py` |
+| `--snap` | 只存 `screenshots/calib.png`，自己量坐标手填 |
+
+预览里红线如果变成"每两格一条"或"每半格一条"，就是把周期认成了 2 倍/半倍，直接输入真实行列数即可。
 
 `config.py` 自带自检：行高与列宽相差超过 0.5 px 会打印警告，说明 `BG_REGION` / `ROWS` / `COLS` 有一个填错了。
 
@@ -244,7 +260,7 @@ python -m minesweeper_copilot.tools.collect --dry-run    # 只统计不存图
 
 ### 重训的完整流程
 
-1. 新机器或换了窗口：`python -m minesweeper_copilot.tools.calibrate --rows 16 --cols 16`，结果自动写进 `config.py`；
+1. 新机器或换了窗口：`python -m minesweeper_copilot.tools.calibrate`，点两下自动算出行列数，确认网格后写进 `config.py`；
 2. 想补样本：棋盘展开后跑 `python -m minesweeper_copilot.tools.collect`，人工筛一遍并入 `data/imgs/`，再跑 `python -m minesweeper_copilot.tools.renumber data/imgs` 重新编号（见上一节）；
 3. `python -m minesweeper_copilot.tools.train`，看输出里的混淆矩阵，确认每一类都在 96% 以上；
 4. 补过样本的话，跑 `python -m minesweeper_copilot.tools.pack_samples` 重新打包，连同 `models/recognize_new.keras` 一起提交；
