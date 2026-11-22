@@ -84,8 +84,55 @@ def split_cells(region_img, rows=ROWS, cols=COLS):
     return cells
 
 
-def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
-    """按颜色判断格子类别，只返回 COLLECT_CLASSES 里的值。其余一律 None。"""
+def ink_profile(cell):
+    """统计一格里的笔画量：返回 (覆盖率, 红占比, 暗占比)，只统计、不判定。
+
+    与 label_by_color 用同一套内缩和阈值，两处对「有没有笔画」的判断因此一致。
+    实测 data/imgs：空块与未翻开格三项全是 0；旗子覆盖约 0.32 且偏红；
+    地雷覆盖约 0.63 且全黑；数字 1~6 覆盖 0.36~0.69。
+    点击前的颜色复核靠这三个数判断「这一格到底有没有笔画」。
+    """
+    a = np.asarray(cell, dtype=np.int16)
+    h, w = a.shape[:2]
+    m = max(2, int(round(min(h, w) * 0.18)))
+    b = a[m:h - m, m:w - m]
+    if b.size == 0:
+        return 0.0, 0.0, 0.0
+    red = (b[:, :, 0] > 140) & (b[:, :, 1] < 110) & (b[:, :, 2] < 110)
+    dark = b.sum(axis=2) / 3.0 < 70
+    sat = b.max(axis=2) - b.min(axis=2)
+    lum = b.sum(axis=2) / 3.0
+    ink = (sat > 90) | (lum < 60)
+    return float(ink.mean()), float(red.mean()), float(dark.mean())
+
+
+def relief(cell):
+    """量一格的「立体感」：左上边缘的平均亮度减去右下边缘的平均亮度。
+
+    未翻开的格子是凸起的，光从左上来，所以左上亮、右下暗，这个值明显为正；
+    已经翻开的格子是平的，反而右下略亮，值是负的。实测 data/imgs 的分布：
+    已翻开空白格 -15.3~-9.0，未翻开格 +33.8~+52.9，中间空着 42 个亮度级，
+    所以它能分开这两类——而笔画量对它们都是 0，是分不开的。
+    缩放不影响这个值（22/40/64 像素下实测几乎不漂），它不依赖具体格距。
+    """
+    a = np.asarray(cell.convert('RGB'), dtype=np.float32).mean(axis=2)
+    h, w = a.shape[:2]
+    m = max(2, int(round(min(h, w) * 0.22)))
+    tl = a[:m, :].mean() * 0.5 + a[:, :m].mean() * 0.5
+    br = a[-m:, :].mean() * 0.5 + a[:, -m:].mean() * 0.5
+    return float(tl - br)
+
+
+def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14, min_cover=None):
+    """按颜色判断格子类别，只返回 COLLECT_CLASSES 里的值。其余一律 None。
+
+    min_cover 是笔画覆盖率的下限，默认 MIN_INK_COVER（0.40）。采集样本时这个门槛
+    用来挡掉笔画残缺的图；点击前的复核要反过来放宽，因为数字 1 的细笔画只有
+    0.37~0.40，被门槛拦掉就等于少了一道保险。放宽后实测 6 个数字类别 1894 张
+    样本判错 0 张。
+    """
+    if min_cover is None:
+        min_cover = MIN_INK_COVER
     a = np.asarray(cell, dtype=np.int16)
     h, w = a.shape[:2]
     # 去掉四周的可能残留的格子边框
@@ -100,7 +147,7 @@ def label_by_color(cell, max_dist=48.0, margin=22.0, min_ink=14):
     sat = b.max(axis=2) - b.min(axis=2)
     lum = b.sum(axis=2) / 3.0
     ink = (sat > 90) | (lum < 60)
-    if ink.sum() < min_ink or ink.mean() < MIN_INK_COVER:
+    if ink.sum() < min_ink or ink.mean() < min_cover:
         return None
     px = b[ink]
     col = np.median(px, axis=0)

@@ -18,12 +18,13 @@ from PIL import Image
 from keras.models import load_model
 from multiprocess import Pool
 from pynput.keyboard import KeyCode, Listener
-from time import time
 
 from .config import *  # noqa: F401,F403  —— 全项目唯一的参数入口
-from .solver import build_constraints, hint as mine_hint, solve_prob as mine_prob
+from .solver import (build_constraints, forced_safe, hint as mine_hint,
+                     solve_prob as mine_prob)
 # P1 颜色复核用：label_by_color 只按笔画颜色判数字，与 CNN 完全是两条独立路径
-from .tools.collect import PALETTE as DIGIT_COLORS, label_by_color, next_index
+from .tools.collect import (PALETTE as DIGIT_COLORS, ink_profile, label_by_color,
+                             next_index, relief)
 
 # 仓库根目录（本文件在 <根>/minesweeper_copilot/ 下）
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,6 +32,20 @@ MODEL_PATH = os.path.join(ROOT_DIR, 'models', 'recognize_new.keras')
 
 # 爆炸的红雷：踩中的那颗雷在界面上是红底的，出现它说明本局已经结束
 BOOM_CLASS = 10
+
+# 其余几个形状类的编码值，颜色复核做「有没有笔画」判断时要用
+FLAG_CLASS = -1
+UNREVEALED_CLASS = -2
+MINE_CLASS = 9
+
+# 笔画量的几条线（实测 data/imgs 各类的分位数，两边都留足余量）
+INK_MIN = 0.22    # 空块 / -2 是 0.00，旗子最低 0.31，数字最低 0.37：0.22 落在空档里
+FLAG_MIN = 0.18   # 说「这里是旗子」却连 0.18 的笔画都没有，那就不可能是旗子
+FLAG_MAX = 0.55   # 旗子覆盖率 0.31~0.35；红雷 0.95，被认成旗子时靠这条抓
+FLAG_RED_MIN = 0.08  # 旗子的红占笔画 0.15~0.17；黑地雷被认成旗子时红占比是 0.00
+MINE_MIN = 0.40   # 地雷覆盖率实测 0.58~0.64
+MINE_RED_MAX = 0.10  # 黑地雷的红占比是 0.00；红雷 0.25~0.39，被认成黑地雷时靠这条抓
+RELIEF_UP = 20.0  # 立体感：未翻开的凸格 33.8~52.9，已翻开的平格 -15.3~-9.0
 
 # 已训练的 CNN（Keras 3 的 .keras 格式）。由 main() 载入，不放模块顶层，
 # 这样单独 import 本模块时不会顺带拉起 TensorFlow。
@@ -109,7 +124,6 @@ def show_screen_shoot(board=None):
         for j in range(COLS):
             b[i * 32:i * 32 + 32, j * 32:j * 32 + 32] = board[i][j]
     b = b / 255
-    print(b)
     plt.imshow(b)
     plt.show()
 
@@ -143,20 +157,26 @@ def record_board(model, path=RECORD_PATH):
     sq_pred = np.argmax(np.asarray(model(sq_board, training=False)), axis=1)
     sq_pred = np.array([net_decoder[i] for i in sq_pred])
     sq_pred = sq_pred.reshape((ROWS, COLS))
-    for _cls in net_encoder:  # 首次记录时类别子目录可能还不存在，先建好
-        os.makedirs(os.path.join(path, str(_cls)), exist_ok=True)
+    counters = {}
     for i in range(ROWS):
         for j in range(COLS):
-            save_path = path + '\\' + str(sq_pred[i][j]) + '\\' + str(sq_pred[i][j]) + '_' + str(
-                int(time() % 10000)) + '.png'
-            crops[i][j].save(save_path)
+            cls = int(sq_pred[i][j])
+            folder = os.path.join(path, str(cls))
+            os.makedirs(folder, exist_ok=True)
+            # 按 <类别>_<四位序号>.png 连续编号，从目录里已有的最大编号往后接。
+            # 早期版本拿 int(time() % 10000) 当文件名：同一秒内的同类格子全写进同一个
+            # 文件，一趟下来只剩最后一张，采到的样本几乎全军覆没。
+            if cls not in counters:
+                counters[cls] = next_index(folder, cls)
+            else:
+                counters[cls] += 1
+            crops[i][j].save(os.path.join(folder, '%d_%04d.png' % (cls, counters[cls])))
 
 
 # AI算法
 def deal_board(board):
     to_flag = set()
     to_click = set()
-    not_sure = dict()
     pad_board = np.pad(board, 1)
     row, col = board.shape
     while 1:
@@ -200,6 +220,7 @@ def deal_board(board):
             # 对每个没有翻开的格子a，如果周围有翻开的格子b1，那么将b1周围的所有未翻开的格子list1和b1的大小保存到一个列表，
             #                    如果周围有翻开的格子b2，那么将b2周围的所有未翻开的格子list2和b2的大小保存到一个列表，...
             # 最后得到一个关联关系  a的位置：与a有关的未翻开的格子的位置及隐藏地雷数量，保存到not_sure中
+            not_sure = {}  # 每轮重建：跨轮累积会让同一个格子挂上旧约束，越跑越慢还可能误判
             for i in range(1, row + 1):
                 for j in range(1, col + 1):
                     if pad_board[i, j] > 0:
@@ -294,20 +315,29 @@ def print_safety_hint(board):
 
 
 # ---------------------------------------------------------------- 点击前的两道复核
-# 推理本身从不点雷（模拟验证 3000+ 次点击零失误），炸雷全部来自「数字被认错」：
+# 推理本身从不点雷（模拟验证里几万次点击零失误），炸雷全部来自「数字被认错」：
 # 6 被读成 4，周围「还剩 2 颗雷」提前成立，于是把真雷判成安全格。所以能不能不炸雷，
 # 取决于能不能在上鼠标之前发现识别错了。两道复核都只做一件事：发现不确定就停。
 #
 # 便宜的那道（P1）先跑：颜色只看笔画，和神经网络毫无关系，认错数字时几乎必然对不上。
-
-PROB_SAFE = 0.0  # 只点「在所有一致解里都不是雷」的格子：概率必须严格为 0
+# 贵的那道（P0）后跑：换一套完全独立的推理重算一遍，它说安全才算安全。
 
 
 def verify_by_color(board, cells):
-    """P1：用数字笔画配色独立复核 CNN。返回冲突 [(行, 列, CNN 认成, 颜色认为)]。
+    """P1：不看神经网络，用格子的实际像素独立复核它的结论。
 
-    只复核 1~6 这类有固定配色的数字格；空块、未翻开、旗子、地雷没有配色，
-    label_by_color 返回 None，不算冲突。行列是 0 基数（直接索引 board）。
+    返回冲突 [(行, 列, CNN 认成, 像素认为是)]，第四项要么是颜色判出的数字，
+    要么是 'blank'（一格笔画都没有）/ 'ink'（明明有笔画却是空白类）/
+    'blot'（说这里是旗子，可它一点也不红）/ 'solid'（笔画太满，不是旗子）/
+    'red'（说是黑地雷，可它是红的）/ 'flat'（说是未翻开，可它没有凸起）/
+    'raised'（说是已翻开的空格，可它是凸起的）。行列是 0 基数（直接索引 board）。
+
+    判据全部来自 data/imgs 的实测分布，两条各管一半：
+      1~6 —— 数字的颜色是固定的，笔画主色能独立判出是几，认错必然对不上；
+      0 / -2 / -1 / 9 —— 靠笔画量和红色。空块与未翻开格覆盖率为 0.00，
+        旗子 0.31~0.35 且红占比 0.15+，地雷 0.58~0.64 且不含红，红雷 0.95 且红 0.25+。
+    只有 7 与 9 无法互相区分（同为纯黑），这里对它们只判「有没有笔画」。
+    0 与 -2 都是空白，但未翻开的格子是凸起的，用 `relief()` 量立体感可以分开。
     """
     if not VERIFY_BY_COLOR:
         return []
@@ -316,22 +346,66 @@ def verify_by_color(board, cells):
     for r in range(rows):
         for c in range(cols):
             v = int(board[r, c])
-            if v not in DIGIT_COLORS:  # 只有 1~6 有配色，其余跳过
+            cell = cells[r][c]
+            if v in DIGIT_COLORS:
+                # 复核时把覆盖率门槛放宽到 INK_MIN：数字 1 的细笔画约 0.37，
+                # 按采集用的 0.40 会被判成「判不出色」，白白少一道保险。
+                color = label_by_color(cell, min_cover=INK_MIN)
+                if color is not None:
+                    if color != v:
+                        conflicts.append((r, c, v, color))
+                    continue
+                # 颜色判不出来，还有一种是「这里根本没有笔画」：空白格被认成数字。
+                # （数字 1 有约 8% 的样本因笔画太细判不出色，它们的覆盖率仍有 0.37+，
+                #   所以只有覆盖率低于 INK_MIN 才算冲突，不会误伤正常的数字 1。）
+                cover, _, _ = ink_profile(cell)
+                if cover < INK_MIN:
+                    conflicts.append((r, c, v, 'blank'))
                 continue
-            color = label_by_color(cells[r][c])
-            if color is not None and color != v:
-                conflicts.append((r, c, v, color))
+            cover, red, _ = ink_profile(cell)
+            if v in (0, UNREVEALED_CLASS):
+                if cover >= INK_MIN:
+                    conflicts.append((r, c, v, 'ink'))
+                # 这一格有没有笔画，两者都是 0，只能看立体感：未翻开是凸起的。
+                elif v == UNREVEALED_CLASS and relief(cell) < RELIEF_UP:
+                    conflicts.append((r, c, v, 'flat'))
+                elif v == 0 and relief(cell) >= RELIEF_UP:
+                    conflicts.append((r, c, v, 'raised'))
+            elif v == FLAG_CLASS:
+                # 旗子是红色小旗：笔画既要有、又不能多、还必须是红的。
+                # 地雷被认成旗子，要么一点红都没有（0.00），要么笔画太多（0.95）。
+                if cover < FLAG_MIN:
+                    conflicts.append((r, c, v, 'blank'))
+                elif cover > FLAG_MAX:
+                    conflicts.append((r, c, v, 'solid'))
+                elif red < FLAG_RED_MIN:
+                    conflicts.append((r, c, v, 'blot'))
+            elif v == MINE_CLASS:
+                # 地雷是纯黑的；红雷（爆炸后）覆盖率同样是 0.95，只有红色能分开。
+                if cover < MINE_MIN:
+                    conflicts.append((r, c, v, 'blank'))
+                elif red >= MINE_RED_MAX:
+                    conflicts.append((r, c, v, 'red'))
     return conflicts
 
 
 def save_color_conflicts(conflicts, cells):
-    """把颜色复核发现的不一致格子存进 samples/：颜色给的标签是准的，是白捡的难样本。"""
+    """把复核发现的不一致格子存进 samples/，当白捡的难样本。
+
+    数字冲突的标签是可信的（颜色直接给出是几），存进 samples/auto/<数字>/，
+    筛一遍就能并入 data/imgs 重训。形状类冲突只能说明「这一格有/没有笔画」，
+    不足以断定正确类别，所以单独存进 samples/review/，留给人看。
+    """
     saved = 0
-    for r, c, cnn, color in conflicts:
+    for r, c, cnn, guess in conflicts:
         try:
-            folder = os.path.join(SAMPLES_PATH, str(color))
+            if isinstance(guess, int):
+                folder = os.path.join(SAMPLES_PATH, str(guess))
+                name = '%d_%04d.png' % (guess, next_index(folder, guess))
+            else:
+                folder = os.path.join(os.path.dirname(SAMPLES_PATH.rstrip(os.sep)), 'review')
+                name = '%d_%04d.png' % (cnn, next_index(folder, cnn))
             os.makedirs(folder, exist_ok=True)
-            name = '%d_%04d.png' % (color, next_index(folder, color))
             cells[r][c].save(os.path.join(folder, name))
             saved += 1
         except Exception:
@@ -340,11 +414,18 @@ def save_color_conflicts(conflicts, cells):
 
 
 def verify_by_prob(board, to_click):
-    """P0：点击前算全盘概率，只放行概率严格为 0 的格子。
+    """P0：点击前独立复核，只放行「在它所在分量的全部一致解里都不是雷」的格子。
 
-    返回 (放行的格子, 被拦下的 [(行, 列, 概率)], info)。
-    info['reason'] 非空表示整盘都不该点：'contra' 约束自相矛盾、
-    'too_hard' 局面太大算不出、'normal' 正常放行。
+    返回 (放行的格子, 被拦下的 [(行, 列, 中雷概率)], info)。
+    info['reason'] 非空表示整轮都不该点：'contra' 约束自相矛盾、
+    'too_hard' 分量解数超上限算不出、'normal' 正常放行。
+
+    判据是 solver.forced_safe()：只看每格周围的数字，不碰整盘雷数。这是关键——
+    早期版本用「全盘概率 p<=0」把关，而 p 依赖整盘雷数，TOTAL_MINES 填小了会把
+    「还剩 0 颗雷」当成合法约束，算出一整片假 p=0，把地雷当安全格放过去。
+    现在即使雷数填错，最坏也只是整盘无解、程序停下，不会把可能是雷的格子放行。
+
+    被拦下的格子会附上全盘概率，纯粹是为了打印出来给人看。
     """
     info = {'reason': 'normal', 'checked': VERIFY_BY_PROB}
     if not VERIFY_BY_PROB or not to_click:
@@ -355,17 +436,21 @@ def verify_by_prob(board, to_click):
         info['reason'] = 'contra'
         info['contradictions'] = contradictions
         return [], [], info
-    p = mine_prob(board)
-    if p is None:
+    safe_set = forced_safe(board)
+    if safe_set is None:
         info['reason'] = 'too_hard'
         return [], [], info
+    # 只有被拦下时才去算全盘概率，用来在提示里显示「其实有多危险」。
+    probs = None
     safe, risky = [], []
     for r, c in to_click:
-        prob = float(p[r - 1, c - 1])  # deal_board 的坐标是 1 基数
-        if prob <= PROB_SAFE:
+        if (r - 1, c - 1) in safe_set:  # deal_board 的坐标是 1 基数
             safe.append((r, c))
-        else:
-            risky.append((r, c, prob))
+            continue
+        if probs is None:
+            probs = mine_prob(board)
+        prob = 1.0 if probs is None else float(probs[r - 1, c - 1])
+        risky.append((r, c, prob))
     return safe, risky, info
 
 
@@ -392,9 +477,21 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
         if conflicts:
             saved = save_color_conflicts(conflicts, cells)
             print('[verify] 颜色复核发现 %d 处识别冲突，本轮不点击：' % len(conflicts))
-            for r, c, cnn, color in conflicts[:6]:
-                print('           第 %2d 行第 %2d 列：CNN 认成 %d，笔画颜色说明是 %d'
-                      % (r + 1, c + 1, cnn, color))
+            for r, c, cnn, guess in conflicts[:6]:
+                if isinstance(guess, int):
+                    note = '笔画颜色说明是 %d' % guess
+                elif guess == 'blank':
+                    note = '这一格连笔画都没有，不可能是它'
+                elif guess == 'solid':
+                    note = '这一格的笔画满得像爆炸后的红雷，不是小旗'
+                elif guess == 'blot':
+                    note = '说是小旗却一点红都没有，更像黑地雷'
+                elif guess == 'red':
+                    note = '说是黑地雷，可它是红的'
+                else:
+                    note = '这一格明明有一片笔画，不可能是空白格'
+                print('           第 %2d 行第 %2d 列：CNN 认成 %d，%s'
+                      % (r + 1, c + 1, cnn, note))
             if len(conflicts) > 6:
                 print('           ……另有 %d 处' % (len(conflicts) - 6))
             if saved:
@@ -411,18 +508,20 @@ def game_once(duration=0.01, interval=0.01, auto_flag=False):
             print_safety_hint(board)
             return False
         if pinfo['reason'] == 'too_hard':
-            print('[verify] 局面太大算不出概率，无法确认安全，本轮不点击。')
+            print('[verify] 局面太大（局部解数超上限），无法确认安全，本轮不点击。')
             print('         可以直接按 B 跳过复核（改 config.VERIFY_BY_PROB = False），但会失去这层保险。')
             return False
         if risky:
-            print('[verify] 概率复核拦下 %d 格（推理说是安全，全盘概率不是 0）：' % len(risky))
+            print('[verify] 独立复核拦下 %d 格（推理说是安全，但按周围数字推不出这个结论）：'
+                  % len(risky))
             for r, c, prob in risky[:6]:
-                print('           第 %2d 行第 %2d 列   中雷概率 %5.1f%%'
+                print('           第 %2d 行第 %2d 列   全盘估计中雷概率 %5.1f%%'
                       % (r + 1, c + 1, 100.0 * prob))
             if safe:
-                print('         其余 %d 格概率为 0，照常点击。' % len(safe))
+                print('         其余 %d 格在所属局部的全部解里都不是雷，照常点击。' % len(safe))
             else:
-                print('         没有一格概率为 0，本轮不点击。')
+                print('         没有一格能这样确认，本轮不点击。')
+                print('         这说明推理和局部约束对不上，多半是格子被认错了，请看一眼棋盘。')
                 print_safety_hint(board)
                 return False
             to_click = safe

@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
 """全局面雷概率求解器：推不动的时候，算出每个未翻开格子是雷的概率。
 
-给你「现在点哪一格最安全」用。它只算概率、不做决定，程序不会拿它自动点击。
+三个入口：
+  forced_safe(board) —— 点击前复核用。返回「按周围数字一定不是雷」的格子集合：
+    挨着已翻开的 0 的格子，加上在所在分量的全部一致解里都不是雷的格子。
+    只看每格周围的数字、与整盘雷数无关，所以雷数填错也说不出假安全。
+  solve_prob(board) —— 算出每格是雷的概率，forced_safe 与 hint 都建在它上面。
+  hint(board) —— 死局时给人看。打印最安全的 3 格，然后停下等你手动点，
+    绝不自动点击。
 
-唯一调用方是 autoplay.py 的 print_safety_hint()：推理推不动（死局）时打印
-最安全的 3 格，然后停下等你手动点。棋盘状态由 autoplay.py 的 CNN 识别给出，
-所以识别错了这里算出的概率也不可信——hint() 的 info['contradictions'] 就是提示。
+棋盘状态由 autoplay.py 的 CNN 识别给出，识别错了这里算出的概率也不可信——
+hint() 的 info['contradictions'] 就是提示。
 
 思路
 ----
@@ -18,7 +23,9 @@
 
 局限
 ----
-- 需要知道整盘雷数。用 config.TOTAL_MINES 填写；填 0 时按当前棋盘估算。
+- solve_prob / hint 需要知道整盘雷数（用 config.TOTAL_MINES 填写；填 0 时按当前
+  棋盘估算）。只用来选「点哪最安全」，雷数不准就是概率不准。forced_safe 不用它，
+  复核因此不受这个值影响。
 - 棋盘识别有误（比如 6 被认成 4）时，约束之间会互相矛盾。这种情况
   solve_prob 仍然会给数，但结论不可信——hint() 返回的 info['contradictions']
   就是判断依据，autoplay.py 会在打印提示前先说一句「有 N 条约束互相矛盾」。
@@ -205,6 +212,49 @@ def _logadd(a, b):
     return a + math.log1p(math.exp(b - a))
 
 
+def forced_safe(board):
+    """返回「所有局部一致解里都不是雷」的格子集合，算不出时返回 None。
+
+    autoplay.py 的点击前复核就靠这个：它只看每格周围的数字，不碰整盘雷数，
+    所以 config.TOTAL_MINES 填错也不会把地雷说成安全——雷数填错只会让整盘
+    无解，不会让某一格从「可能是雷」变成「必然安全」。
+
+    判定过程和 split_components / enum_component 完全一致：某个格子在它所在
+    分量的每一个一致解里都是 0，它才进这个集合。deal_board 的四步推理给出的
+    正是这类结论，所以正确识别时 to_click 一定是它的子集；若 deal_board 说
+    安全的格不在这里，说明数字被认错了，调用方应当停手。
+
+    返回 None 表示有分量解数超上限，放弃判断（宁可不说，也不瞎说）。
+    """
+    cons, unknown, _ = build_constraints(board)
+    if not unknown:
+        return set()
+    safe = set()
+    # 只看约束分量会漏掉一类格子：挨着「已翻开的 0」的未翻开格。0 表示周围一格雷
+    # 都没有，所以它的邻居必然安全——即使这一格不挨着任何正数、不在任何约束里。
+    # 第一、二步推理（`deal_board` 的第 3 步）给出的正是这类结论，漏掉会误拦。
+    rows, cols = board.shape
+    for r in range(rows):
+        for c in range(cols):
+            if board[r, c] != UNK:
+                continue
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    rr, cc = r + dr, c + dc
+                    if (dr or dc) and 0 <= rr < rows and 0 <= cc < cols and board[rr, cc] == 0:
+                        safe.add((r, c))
+    if not cons:
+        return safe  # 一条约束都没有，只剩「挨着 0」这一条结论
+    for cells, cids in split_components(cons):
+        dist, cellmine = enum_component(cells, cons, cids)
+        if dist is None:
+            return None
+        for j, cell in enumerate(cells):
+            if not cellmine[j]:
+                safe.add(cell)
+    return safe
+
+
 def estimate_total_mines(board):
     """不知道雷数时按当前棋盘估一个：用已翻开数字的平均密度外推整盘。
 
@@ -220,13 +270,24 @@ def estimate_total_mines(board):
     return int(round(density * total_cells))
 
 
-def solve_prob(board, total_mines=None):
-    """返回每格为雷的概率矩阵；解不出（解太多/无解）返回 None。
+def solve_prob(board, total_mines=None, info=None):
+    """返回每格为雷的概率矩阵；解不出（解太多/无解/雷数不相容）返回 None。
 
     total_mines 省略时用 config.TOTAL_MINES，再省略就按棋盘估算。
+    info 传入一个 dict 时会把原因写回 reason：
+      no_unknown     没有未翻开的格子
+      flag_mismatch  旗比雷多，或剩余格数比剩余雷还少
+      infeasible     整盘雷数与已知约束凑不出任何一个一致解
+      too_hard       分量解数超过上限
     """
+    if info is not None:
+        info['reason'] = None
     cons, unknown, contradictions = build_constraints(board)
+    if info is not None:
+        info['contradictions'] = contradictions
     if not unknown:
+        if info is not None:
+            info['reason'] = 'no_unknown'
         return None
     if total_mines is None:
         total_mines = TOTAL_MINES if TOTAL_MINES and TOTAL_MINES > 0 else estimate_total_mines(board)
@@ -234,10 +295,18 @@ def solve_prob(board, total_mines=None):
     flags = int((board == FLAG).sum())
     n_unk = len(unknown)
     rest = total_mines - flags
+    if info is not None:
+        info['total_mines'] = int(total_mines)
+        info['flags'] = flags
+        info['unknown'] = n_unk
     if rest < 0 or rest > n_unk:
-        # 旗与雷数对不上（自动标雷时游戏插的旗不一定是真雷，或识别出错）。
-        # 夹到可行区间继续，不要整盘放弃。
-        rest = min(max(rest, 0), n_unk)
+        # 旗比雷还多，或者剩余格数比剩余雷数还少：这已经不可能是同一个局面。
+        # 早期版本把 rest 夹到 [0, n_unk] 继续算，等于偷偷换成一个别的雷数——
+        # 「还剩 0 颗雷」于是成了合法约束，算出一整片假的概率 0，把地雷当安全格。
+        # 这里直接判失败，交给调用方停手。
+        if info is not None:
+            info['reason'] = 'flag_mismatch'
+        return None
 
     p = np.zeros(board.shape, dtype=float)
     if not cons:
@@ -270,9 +339,18 @@ def solve_prob(board, total_mines=None):
 
     all_logs = prefix[m]
     u_lo, u_hi = min(all_logs), max(all_logs)
-    rest_eff = min(max(rest, u_lo), u_hi + nh)
+    # 分量约束能接受的雷数区间是 [u_lo, u_hi + nh]（孤立格最多再放 nh 颗）。
+    # 整盘雷数落在这个区间外，说明「数字 + 旗 + 雷数」三者凑不出一致的局面，
+    # 是识别错或雷数填错，不能夹进去继续算——夹进去就会得到一批假概率。
+    if rest < u_lo or rest > u_hi + nh:
+        if info is not None:
+            info['reason'] = 'infeasible'
+        return None
+    rest_eff = rest
     if nh == 0 and rest_eff not in all_logs:
-        rest_eff = min(all_logs, key=lambda u: abs(u - rest_eff))
+        if info is not None:
+            info['reason'] = 'infeasible'
+        return None
 
     def log_weight(u):
         return _log_comb(nh, rest_eff - u)
@@ -301,17 +379,21 @@ def solve_prob(board, total_mines=None):
                 v = lo + lw
                 tail[ui] = _logadd(tail[ui], v) if ui in tail else v
         for j, cell in enumerate(cells):
+            if not cellmine[j]:
+                # 分量内所有一致解里这一格都不是雷，概率就是 0（与整盘雷数无关）。
+                p[cell] = 0.0
+                continue
             num = None
             for k, c in cellmine[j].items():
                 if k in tail:
                     v = math.log(c) + tail[k]
                     num = v if num is None else _logadd(num, v)
             if num is None:
-                p[cell] = 0.0
-            elif logZ is None:
-                p[cell] = 1.0
-            else:
-                p[cell] = min(1.0, max(0.0, math.exp(min(0.0, num - logZ))))
+                # 这一格在分量里可能是雷，却和整盘雷数配不上任何一个解：无解。
+                if info is not None:
+                    info['reason'] = 'infeasible'
+                return None
+            p[cell] = min(1.0, max(0.0, math.exp(min(0.0, num - logZ))))
 
     if nh:
         num = None
@@ -352,10 +434,23 @@ def hint(board, top=3, total_mines=None):
     }
     if not unknown:
         info['error'] = '没有未翻开的格子'
+        info['reason'] = 'no_unknown'
         return None, info
-    p = solve_prob(board, total_mines)
+    sub = {}
+    p = solve_prob(board, total_mines, info=sub)
+    info['reason'] = sub.get('reason')
+    if sub.get('flags') is not None:
+        info['flags'] = sub['flags']
+    if sub.get('contradictions') is not None:
+        info['contradictions'] = sub['contradictions']
     if p is None:
-        info['error'] = '局面太复杂（分量解数超上限）或约束无解，算不出概率'
+        reason = sub.get('reason')
+        if reason == 'flag_mismatch':
+            info['error'] = '旗的数量与整盘雷数对不上（旗插错或数字认错），算不出概率'
+        elif reason == 'infeasible':
+            info['error'] = '整盘雷数与棋盘上的数字凑不出一致局面（识别有误或雷数填错），算不出概率'
+        else:
+            info['error'] = '局面太复杂（分量解数超上限）或约束无解，算不出概率'
         return None, info
     entries = sorted(((float(p[r, c]), int(r), int(c)) for r, c in unknown))
     info['error'] = None
